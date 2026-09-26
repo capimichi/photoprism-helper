@@ -41,8 +41,7 @@ photoprism-helper/
 │   ├── repository/     # BaseRepository e MediaRepository (query di analisi e upsert)
 │   ├── service/        # MediaSyncService, StorageAnalysisService, TagService, VideoOptimizerService
 │   └── cli.py          # Entrypoint principale Click
-├── docker/
-│   └── python/Dockerfile
+├── Dockerfile          # Immagine Python con FFmpeg
 ├── docker-compose.yml  # MariaDB 10.11 + Container Python
 ├── pyproject.toml      # Configurazione pacchetto e dipendenze
 ├── .env.example        # Modello variabili d'ambiente

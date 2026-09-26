@@ -2,7 +2,7 @@ services:
   python:
     build:
       context: .
-      dockerfile: docker/python/Dockerfile
+      dockerfile: Dockerfile
     container_name: photoprism-helper-python
     restart: unless-stopped
     working_dir: /workspace
