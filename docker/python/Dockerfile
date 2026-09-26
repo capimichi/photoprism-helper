@@ -1,16 +1,24 @@
 FROM python:3.12-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /workspace
+
+RUN apt-get update && apt-get install --yes --no-install-recommends \
+    bash \
     git \
+    curl \
+    ca-certificates \
     ffmpeg \
     build-essential \
     default-libmysqlclient-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /workspace
+COPY pyproject.toml README.md ./
+COPY photoprismhelper ./photoprismhelper
 
-COPY pyproject.toml /workspace/
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -e .
 
 CMD ["tail", "-f", "/dev/null"]

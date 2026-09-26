@@ -13,7 +13,7 @@ services:
     environment:
       APP_NAME: ${APP_NAME:-photoprism-helper}
       DEBUG: ${DEBUG:-false}
-      DATABASE_URL: ${DATABASE_URL:-mysql+pymysql://photoprismhelper:photoprismhelper@mariadb:3306/photoprismhelper}
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-mysql+pymysql://${MARIADB_USER:-photoprismhelper}:${MARIADB_PASSWORD:-photoprismhelper}@mariadb:3306/${MARIADB_DATABASE:-photoprismhelper}}
       PHOTOPRISM_BASE_URL: ${PHOTOPRISM_BASE_URL:-http://localhost:2342}
       PHOTOPRISM_USERNAME: ${PHOTOPRISM_USERNAME:-admin}
       PHOTOPRISM_PASSWORD: ${PHOTOPRISM_PASSWORD:-}
