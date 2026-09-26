@@ -6,7 +6,7 @@ services:
     container_name: photoprism-helper-python
     restart: unless-stopped
     working_dir: /workspace
-    command: bash -lc "photoprismhelper db:init && tail -f /dev/null"
+    command: bash -lc "alembic upgrade head && tail -f /dev/null"
     volumes:
       - .:/workspace
       - ${PHOTOPRISM_ORIGINALS_PATH:-/photoprism/originals}:/photoprism/originals

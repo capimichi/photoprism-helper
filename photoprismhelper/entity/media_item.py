@@ -8,7 +8,7 @@ from photoprismhelper.entity.base import Base
 
 
 class MediaItem(Base):
-    __tablename__ = "media_items"
+    __tablename__ = "media"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     uid: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)

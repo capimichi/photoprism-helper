@@ -54,6 +54,7 @@ photoprism-helper/
 ## Requisiti
 
 - **Python**: `>= 3.11` (consigliato 3.12)
+- **SQLAlchemy + Alembic**: per la gestione del database e delle migrazioni
 - **MariaDB** o **MySQL**: `>= 10.5` / `8.0` (incluso in `docker-compose.yml`)
 - **FFmpeg**: facoltativo per l'ottimizzazione video (già incluso nel container Docker)
 
@@ -124,9 +125,13 @@ photoprism-helper/
 
 ## Guida ai Comandi CLI
 
-### 1. Inizializzazione Database
-Crea la tabella `media_items` e gli indici su MariaDB se non esistono:
+### 1. Migrazioni Database (Alembic)
+Applica le migrazioni allo schema su MariaDB (creazione tabella `media` ed indici):
 ```bash
+# Tramite Alembic
+alembic upgrade head
+
+# Oppure tramite il comando helper CLI
 photoprismhelper db:init
 ```
 

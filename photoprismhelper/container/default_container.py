@@ -128,7 +128,7 @@ class DefaultContainer:
         self.injector.binder.bind(VideoOptimizerService, to=video_optimizer_service)
 
         # Commands
-        self.injector.binder.bind(DbInitCommand, to=DbInitCommand(db_manager))
+        self.injector.binder.bind(DbInitCommand, to=DbInitCommand(db_manager, app_config))
         self.injector.binder.bind(
             MediaSyncCommand,
             to=MediaSyncCommand(db_manager, media_sync_service, storage_analysis_service),

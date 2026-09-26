@@ -9,6 +9,7 @@ description = "Helper CLI to index PhotoPrism media into MariaDB, analyze storag
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "alembic>=1.14,<2.0",
     "click>=8.1,<9.0",
     "cryptography>=42.0",
     "injector>=0.22,<1.0",
