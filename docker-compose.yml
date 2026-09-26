@@ -1,0 +1,50 @@
+services:
+  python:
+    build:
+      context: .
+      dockerfile: docker/python/Dockerfile
+    container_name: photoprism-helper-python
+    restart: unless-stopped
+    working_dir: /workspace
+    command: bash -lc "photoprismhelper db:init && tail -f /dev/null"
+    volumes:
+      - .:/workspace
+      - ${PHOTOPRISM_ORIGINALS_PATH:-/photoprism/originals}:/photoprism/originals
+    environment:
+      APP_NAME: ${APP_NAME:-photoprism-helper}
+      DEBUG: ${DEBUG:-false}
+      DATABASE_URL: ${DATABASE_URL:-mysql+pymysql://photoprismhelper:photoprismhelper@mariadb:3306/photoprismhelper}
+      PHOTOPRISM_BASE_URL: ${PHOTOPRISM_BASE_URL:-http://localhost:2342}
+      PHOTOPRISM_USERNAME: ${PHOTOPRISM_USERNAME:-admin}
+      PHOTOPRISM_PASSWORD: ${PHOTOPRISM_PASSWORD:-}
+      PHOTOPRISM_API_TOKEN: ${PHOTOPRISM_API_TOKEN:-}
+      PHOTOPRISM_VERIFY_SSL: ${PHOTOPRISM_VERIFY_SSL:-true}
+      PHOTOPRISM_TIMEOUT_SECONDS: ${PHOTOPRISM_TIMEOUT_SECONDS:-60}
+      PHOTOPRISM_ORIGINALS_PATH: /photoprism/originals
+    depends_on:
+      mariadb:
+        condition: service_healthy
+
+  mariadb:
+    image: mariadb:10.11
+    container_name: photoprism-helper-mariadb
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-photoprismhelper}
+      MARIADB_USER: ${MARIADB_USER:-photoprismhelper}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-photoprismhelper}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-root}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  mariadb_data:
