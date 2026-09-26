@@ -10,6 +10,7 @@ from sqlalchemy import engine_from_config, pool
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from photoprismhelper.container.default_container import DefaultContainer
 from photoprismhelper.entity.base import Base  # noqa: E402
 from photoprismhelper.entity.media_item import MediaItem  # noqa: F401,E402
 
@@ -18,16 +19,12 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-load_dotenv()
-
 target_metadata = Base.metadata
+default_container = DefaultContainer.getInstance()
 
 
 def _get_database_url() -> str:
-    return os.environ.get(
-        "DATABASE_URL",
-        "mysql+pymysql://photoprismhelper:photoprismhelper@localhost:3306/photoprismhelper",
-    )
+    return default_container.get_var("database_url")
 
 
 def run_migrations_offline() -> None:
