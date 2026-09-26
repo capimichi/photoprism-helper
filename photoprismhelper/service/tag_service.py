@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from injector import inject
 
 from photoprismhelper.client.photoprism_client import PhotoprismClient
+from photoprismhelper.mapper.media_mapper import MediaMapper
 from photoprismhelper.repository.media_repository import MediaRepository
 
 logger = logging.getLogger(__name__)
@@ -30,10 +31,10 @@ class TagService:
         proposals: list[TagProposal] = []
         session = self._repository.get_session()
         try:
-            items = self._repository.find_pending_suggested_tags(session, limit=limit)
+            items = self._repository.find_media_with_folders(session, limit=limit)
             for item in items:
                 existing = [t.strip().lower() for t in (item.tags or "").split(",") if t.strip()]
-                suggested = [t.strip() for t in (item.suggested_tags or "").split(",") if t.strip()]
+                suggested = MediaMapper.extract_suggested_tags_from_folder(item.folder_path)
 
                 missing = [s for s in suggested if s.lower() not in existing]
                 if missing:

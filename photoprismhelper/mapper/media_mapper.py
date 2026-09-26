@@ -116,6 +116,4 @@ class MediaMapper:
             photo_title=title,
             is_favorite=is_favorite,
             tags=keywords if keywords else None,
-            suggested_tags=suggested_tags_str,
-            optimization_status="pending",
         )

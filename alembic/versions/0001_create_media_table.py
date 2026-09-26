@@ -39,11 +39,6 @@ def upgrade() -> None:
         sa.Column("photo_title", sa.String(length=512), nullable=True),
         sa.Column("is_favorite", sa.Boolean(), server_default=sa.text("0"), nullable=False),
         sa.Column("tags", sa.Text(), nullable=True),
-        sa.Column("suggested_tags", sa.Text(), nullable=True),
-        sa.Column("optimization_status", sa.String(length=32), server_default="pending", nullable=False),
-        sa.Column("original_size", sa.BigInteger(), nullable=True),
-        sa.Column("optimized_size", sa.BigInteger(), nullable=True),
-        sa.Column("notes", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
@@ -57,11 +52,9 @@ def upgrade() -> None:
     op.create_index("ix_media_media_type", "media", ["media_type"], unique=False)
     op.create_index("ix_media_extension", "media", ["extension"], unique=False)
     op.create_index("ix_media_taken_at", "media", ["taken_at"], unique=False)
-    op.create_index("ix_media_optimization_status", "media", ["optimization_status"], unique=False)
 
 
 def downgrade() -> None:
-    op.drop_index("ix_media_optimization_status", table_name="media")
     op.drop_index("ix_media_taken_at", table_name="media")
     op.drop_index("ix_media_extension", table_name="media")
     op.drop_index("ix_media_media_type", table_name="media")

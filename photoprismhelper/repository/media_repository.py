@@ -41,8 +41,6 @@ class MediaRepository(BaseRepository[MediaItem]):
             existing.photo_title = item.photo_title
             existing.is_favorite = item.is_favorite
             existing.tags = item.tags
-            if item.suggested_tags:
-                existing.suggested_tags = item.suggested_tags
             return existing
         else:
             session.add(item)
@@ -142,23 +140,22 @@ class MediaRepository(BaseRepository[MediaItem]):
         min_size_bytes: int = 50 * 1024 * 1024,
         limit: int = 50,
     ) -> list[MediaItem]:
-        """Find video items larger than min_size_bytes that are not already optimized."""
+        """Find video items larger than min_size_bytes."""
         stmt = (
             select(MediaItem)
             .where(MediaItem.media_type == "video")
             .where(MediaItem.file_size >= min_size_bytes)
-            .where(MediaItem.optimization_status != "optimized")
             .order_by(desc(MediaItem.file_size))
             .limit(limit)
         )
         return list(session.scalars(stmt))
 
-    def find_pending_suggested_tags(self, session: Session, limit: int = 100) -> list[MediaItem]:
-        """Find media items that have suggested folder tags not yet present in existing tags."""
+    def find_media_with_folders(self, session: Session, limit: int = 100) -> list[MediaItem]:
+        """Find media items that have a folder path."""
         stmt = (
             select(MediaItem)
-            .where(MediaItem.suggested_tags.isnot(None))
-            .where(MediaItem.suggested_tags != "")
+            .where(MediaItem.folder_path != "")
+            .where(MediaItem.folder_path != ".")
             .limit(limit)
         )
         return list(session.scalars(stmt))

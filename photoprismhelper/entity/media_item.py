@@ -29,13 +29,6 @@ class MediaItem(Base):
     photo_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     is_favorite: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     tags: Mapped[str | None] = mapped_column(Text, nullable=True)
-    suggested_tags: Mapped[str | None] = mapped_column(Text, nullable=True)
-    optimization_status: Mapped[str] = mapped_column(
-        String(32), index=True, default="pending", nullable=False
-    )
-    original_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    optimized_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
