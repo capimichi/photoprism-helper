@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install --yes --no-install-recommends \
     curl \
     ca-certificates \
     ffmpeg \
+    libimage-exiftool-perl \
     build-essential \
     default-libmysqlclient-dev \
     && rm -rf /var/lib/apt/lists/*

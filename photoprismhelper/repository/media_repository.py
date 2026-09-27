@@ -159,3 +159,28 @@ class MediaRepository(BaseRepository[MediaItem]):
             .limit(limit)
         )
         return list(session.scalars(stmt))
+
+    def find_unoptimized_videos(
+        self,
+        session: Session,
+        limit: int | None = None,
+        min_size_bytes: int = 0,
+    ) -> list[MediaItem]:
+        """Find video items sorted by size descending, excluding those already successfully optimized."""
+        from photoprismhelper.entity.media_conversion import MediaConversion
+
+        completed_subq = select(MediaConversion.media_id).where(MediaConversion.status == "completed")
+        stmt = (
+            select(MediaItem)
+            .where(
+                MediaItem.media_type == "video",
+                MediaItem.id.not_in(completed_subq),
+            )
+        )
+        if min_size_bytes > 0:
+            stmt = stmt.where(MediaItem.file_size >= min_size_bytes)
+
+        stmt = stmt.order_by(desc(MediaItem.file_size))
+        if limit:
+            stmt = stmt.limit(limit)
+        return list(session.scalars(stmt).all())

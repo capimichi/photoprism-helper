@@ -1,4 +1,6 @@
 from photoprismhelper.entity.base import Base
+from photoprismhelper.entity.media_conversion import MediaConversion
 from photoprismhelper.entity.media_item import MediaItem
 
-__all__ = ["Base", "MediaItem"]
+__all__ = ["Base", "MediaConversion", "MediaItem"]
+

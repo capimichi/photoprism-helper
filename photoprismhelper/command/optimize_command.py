@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import click
 from injector import inject
 from tabulate import tabulate
@@ -11,7 +10,7 @@ from photoprismhelper.service.video_optimizer_service import VideoOptimizerServi
 
 
 class VideoOptimizeCommand(AbstractCommand):
-    command_name = "optimize:videos"
+    command_name = "video:optimize"
 
     @inject
     def __init__(
@@ -23,91 +22,132 @@ class VideoOptimizeCommand(AbstractCommand):
         self._storage_analysis_service = storage_analysis_service
 
     def register_options(self, fn):
-        fn = click.option(
-            "--min-size-mb",
-            default=50,
-            help="Minimum file size in MB to qualify as candidate (default: 50).",
-        )(fn)
-        fn = click.option(
-            "--limit",
-            default=25,
-            help="Maximum number of candidates to list (default: 25).",
-        )(fn)
-        fn = click.option(
-            "--generate-script",
-            "script_file",
-            default=None,
-            type=click.Path(dir_okay=False, writable=True),
-            help="Path to generate a shell script with FFmpeg commands.",
-        )(fn)
-        fn = click.option(
-            "--crf",
-            default=26,
-            help="FFmpeg H.265 CRF value (default: 26). Lower is higher quality, 24-28 recommended.",
-        )(fn)
+        fn = click.option("--limit", "-l", default=1, type=int, help="Number of videos to optimize (default: 1).")(fn)
+        fn = click.option("--min-size-mb", default=10, type=int, help="Minimum file size in MB to qualify (default: 10).")(fn)
+        fn = click.option("--dry-run", is_flag=True, default=False, help="List candidates without converting.")(fn)
+        fn = click.option("--interactive/--no-interactive", "-i/-y", default=True, help="Prompt before converting and replacing.")(fn)
+        fn = click.option("--keep-backup/--no-backup", default=True, help="Keep .bak of original file (default: True).")(fn)
+        fn = click.option("--revert", "revert_id", default=None, type=int, help="Revert a conversion by its ID.")(fn)
+        fn = click.option("--history", is_flag=True, default=False, help="Show conversion history.")(fn)
         return fn
 
     def run(
         self,
-        min_size_mb: int = 50,
-        limit: int = 25,
-        script_file: str | None = None,
-        crf: int = 26,
+        limit: int = 1,
+        min_size_mb: int = 10,
+        dry_run: bool = False,
+        interactive: bool = True,
+        keep_backup: bool = True,
+        revert_id: int | None = None,
+        history: bool = False,
     ) -> None:
-        """Scan for heavy videos and generate FFmpeg optimization commands preserving metadata."""
-        candidates = self._optimizer_service.find_candidates(min_size_mb=min_size_mb, limit=limit)
-
-        if not candidates:
-            click.echo(f"No video files found exceeding {min_size_mb} MB.")
+        """Optimize heavy videos ordered by size, with verification and tracking."""
+        # Handle revert
+        if revert_id is not None:
+            click.echo(f"Attempting to revert conversion #{revert_id}...")
+            ok, msg = self._optimizer_service.revert_conversion(revert_id)
+            if ok:
+                click.secho(f"✓ {msg}", fg="green")
+            else:
+                click.secho(f"✗ Revert failed: {msg}", fg="red")
             return
 
-        total_curr_size = sum(c.file_size_bytes for c in candidates)
-        total_est_savings = sum(c.estimated_savings_bytes for c in candidates)
+        # Handle history
+        if history:
+            self._show_history()
+            return
 
-        table_rows = [
-            [
+        candidates = self._optimizer_service.get_candidate_videos(min_size_mb=min_size_mb, limit=limit)
+        if not candidates:
+            click.echo(f"No unoptimized videos found exceeding {min_size_mb} MB.")
+            return
+
+        # Prepare summary table
+        rows = []
+        for c in candidates:
+            duration_str = "-"
+            if c.duration:
+                sec = c.duration / 1e9 if c.duration > 100_000 else c.duration
+                if sec >= 60:
+                    duration_str = f"{int(sec // 60)}m {int(sec % 60)}s"
+                else:
+                    duration_str = f"{sec:.1f}s"
+            rows.append([
                 c.uid[:12],
                 c.file_name[:35],
-                self._storage_analysis_service.format_bytes(c.file_size_bytes),
-                f"{c.duration:.1f}s" if c.duration else "-",
-                c.codec or "-",
-                self._storage_analysis_service.format_bytes(c.estimated_savings_bytes),
-                c.file_path[:35],
-            ]
-            for c in candidates
-        ]
+                c.extension.upper(),
+                self._storage_analysis_service.format_bytes(c.file_size),
+                duration_str,
+                c.folder_path[:25],
+            ])
 
-        click.echo(f"\nFound {len(candidates)} heavy video candidates:")
-        click.echo(tabulate(
-            table_rows,
-            headers=["UID", "File Name", "Current Size", "Duration", "Codec", "Est. Savings (~50%)", "Path"],
-            tablefmt="github",
-        ))
-        click.echo(f"\nTotal Candidate Size: {self._storage_analysis_service.format_bytes(total_curr_size)}")
-        click.echo(f"Total Estimated Savings: {self._storage_analysis_service.format_bytes(total_est_savings)}\n")
+        click.echo("\n### Unoptimized Video Candidates")
+        click.echo(tabulate(rows, headers=["UID", "File Name", "Ext", "Size", "Duration", "Folder"], tablefmt="github"))
+        click.echo()
 
-        if script_file:
-            lines = [
-                "#!/usr/bin/env bash",
-                "# Auto-generated FFmpeg video optimization script by photoprism-helper",
-                "# Preserves all metadata, audio quality, and file modification timestamps.",
-                "set -euo pipefail\n",
-            ]
-            for c in candidates:
-                input_p = c.file_path
-                output_p = f"{input_p}.optimized.mp4"
-                backup_p = f"{input_p}.bak"
-                cmd = self._optimizer_service.generate_ffmpeg_command(input_p, output_p, crf=crf)
-                lines.append(f'echo "Optimizing: {input_p}"')
-                lines.append(cmd)
-                lines.append(f'touch -r "{input_p}" "{output_p}"')
-                lines.append(f'mv "{input_p}" "{backup_p}"')
-                lines.append(f'mv "{output_p}" "{input_p}"')
-                lines.append(f'echo "✓ Replaced original with optimized version (backup: {backup_p})"\n')
+        if dry_run:
+            click.secho("Dry-run mode active: no files were converted.", fg="yellow")
+            return
 
-            with open(script_file, "w") as f:
-                f.write("\n".join(lines))
-            os.chmod(script_file, 0o755)
-            click.echo(f"✓ Optimization bash script generated at: {script_file}")
-        else:
-            click.echo("Tip: Use --generate-script optimize_videos.sh to generate an executable batch FFmpeg script.")
+        # Process candidates
+        for idx, item in enumerate(candidates, start=1):
+            size_fmt = self._storage_analysis_service.format_bytes(item.file_size)
+            click.echo(f"\n[{idx}/{len(candidates)}] Candidate: {item.file_name} ({size_fmt})")
+
+            disk_path = self._optimizer_service.resolve_disk_path(item.file_path)
+            click.echo(f"  • Disk path: {disk_path}")
+
+            if interactive:
+                confirm = click.confirm(f"  Start 1080p HEVC optimization for {item.file_name}?", default=True)
+                if not confirm:
+                    click.echo("  Skipped.")
+                    continue
+
+            click.echo("  Encoding and cloning metadata with ffmpeg + exiftool...")
+            conv = self._optimizer_service.optimize_media(
+                item,
+                keep_backup=keep_backup,
+                replace_in_place=True,
+                max_height=1080,
+            )
+
+            if conv.status == "completed":
+                opt_fmt = self._storage_analysis_service.format_bytes(conv.optimized_size or 0)
+                saved_fmt = self._storage_analysis_service.format_bytes(conv.original_size - (conv.optimized_size or 0))
+                pct = ((conv.original_size - (conv.optimized_size or 0)) / conv.original_size) * 100
+                click.secho(f"  ✓ Conversion #{conv.id} succeeded in {conv.duration_seconds:.1f}s!", fg="green")
+                click.echo(f"    - Original size: {size_fmt}")
+                click.echo(f"    - Optimized size: {opt_fmt} (-{pct:.1f}%, saved {saved_fmt})")
+                if keep_backup:
+                    click.echo(f"    - Backup saved at: {conv.backup_file_path}")
+            else:
+                click.secho(f"  ✗ Conversion failed: {conv.error_message}", fg="red")
+
+    def _show_history(self) -> None:
+        session = self._optimizer_service._media_repository.get_session()
+        try:
+            conversions = self._optimizer_service._conversion_repository.list_conversions(session, limit=20)
+            if not conversions:
+                click.echo("No conversion history found.")
+                return
+
+            rows = []
+            for cv in conversions:
+                saved = (cv.original_size - (cv.optimized_size or 0)) if cv.optimized_size else 0
+                saved_fmt = self._storage_analysis_service.format_bytes(saved) if saved > 0 else "-"
+                dt = cv.created_at.strftime("%Y-%m-%d %H:%M") if cv.created_at else "-"
+                rows.append([
+                    cv.id,
+                    cv.media_uid[:12],
+                    cv.status,
+                    f"{cv.original_extension} -> {cv.optimized_extension}",
+                    self._storage_analysis_service.format_bytes(cv.original_size),
+                    self._storage_analysis_service.format_bytes(cv.optimized_size or 0) if cv.optimized_size else "-",
+                    saved_fmt,
+                    dt,
+                ])
+
+            click.echo("\n### Recent Conversions")
+            click.echo(tabulate(rows, headers=["ID", "Media UID", "Status", "Format", "Original", "Optimized", "Saved", "Date"], tablefmt="github"))
+        finally:
+            session.close()

@@ -3,12 +3,17 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import subprocess
+from datetime import datetime
+from typing import Any
 from injector import inject
 
-from photoprismhelper.model.media_stat import OptimizationCandidate
+from photoprismhelper.entity.media_conversion import MediaConversion
+from photoprismhelper.entity.media_item import MediaItem
+from photoprismhelper.repository.media_conversion_repository import MediaConversionRepository
 from photoprismhelper.repository.media_repository import MediaRepository
+from photoprismhelper.service.metadata_extractor import MetadataExtractor
 from photoprismhelper.service.storage_analysis_service import StorageAnalysisService
+from photoprismhelper.service.video_converter import VideoConverter
 
 logger = logging.getLogger(__name__)
 
@@ -17,108 +22,170 @@ class VideoOptimizerService:
     @inject
     def __init__(
         self,
-        repository: MediaRepository,
+        media_repository: MediaRepository,
+        conversion_repository: MediaConversionRepository,
         storage_analysis_service: StorageAnalysisService,
+        converter: VideoConverter | None = None,
+        extractor: MetadataExtractor | None = None,
     ) -> None:
-        self._repository = repository
+        self._media_repository = media_repository
+        self._conversion_repository = conversion_repository
         self._storage_analysis_service = storage_analysis_service
+        self._converter = converter or VideoConverter()
+        self._extractor = extractor or MetadataExtractor()
 
-    def find_candidates(
+    def get_candidate_videos(
         self,
-        min_size_mb: int = 50,
+        min_size_mb: int = 10,
         limit: int = 25,
-    ) -> list[OptimizationCandidate]:
-        """Find video files that are heavy and candidates for re-encoding."""
+    ) -> list[MediaItem]:
+        """Find video items sorted by size descending that have not been successfully optimized yet."""
         min_size_bytes = min_size_mb * 1024 * 1024
-        session = self._repository.get_session()
+        session = self._media_repository.get_session()
         try:
-            items = self._repository.find_video_candidates_for_optimization(
-                session, min_size_bytes=min_size_bytes, limit=limit
+            return self._media_repository.find_unoptimized_videos(
+                session, limit=limit, min_size_bytes=min_size_bytes
             )
-            candidates: list[OptimizationCandidate] = []
-            for item in items:
-                # Estimate 50% savings using modern H.265 / AV1 compression
-                est_savings = int(item.file_size * 0.50)
-                reason = f"Video exceeds {min_size_mb} MB ({self._storage_analysis_service.format_bytes(item.file_size)})"
-                if item.codec:
-                    reason += f", codec: {item.codec}"
-
-                candidates.append(
-                    OptimizationCandidate(
-                        uid=item.uid,
-                        file_name=item.file_name,
-                        file_path=item.file_path,
-                        file_size_bytes=item.file_size,
-                        media_type=item.media_type,
-                        duration=item.duration,
-                        codec=item.codec,
-                        estimated_savings_bytes=est_savings,
-                        reason=reason,
-                    )
-                )
-            return candidates
         finally:
             session.close()
 
-    def generate_ffmpeg_command(
+    def resolve_disk_path(self, file_path: str) -> str:
+        """Resolve the absolute path of the file on disk."""
+        originals_dir = os.getenv("PHOTOPRISM_ORIGINALS_PATH", "/photoprism/originals")
+        if os.path.isabs(file_path):
+            return file_path
+        return os.path.join(originals_dir, file_path)
+
+    def optimize_media(
         self,
-        input_path: str,
-        output_path: str,
-        crf: int = 26,
-        preset: str = "medium",
-    ) -> str:
-        """
-        Generate FFmpeg command to re-encode video with H.265 preserving all metadata and EXIF.
-        -map 0: include all streams (video, audio, subtitles)
-        -map_metadata 0: keep all metadata tags
-        -c:v libx265 -crf {crf} -preset {preset}: high efficiency compression
-        -c:a copy: keep audio without recompression loss
-        """
-        return (
-            f'ffmpeg -y -i "{input_path}" -map 0 -map_metadata 0 '
-            f'-c:v libx265 -crf {crf} -preset {preset} -tag:v hvc1 -c:a copy "{output_path}"'
-        )
+        item: MediaItem,
+        keep_backup: bool = True,
+        replace_in_place: bool = True,
+        max_height: int = 1080,
+    ) -> MediaConversion:
+        """Transcode and optimize a single video item, record in media_conversion, and update media."""
+        session = self._media_repository.get_session()
+        try:
+            input_path = self.resolve_disk_path(item.file_path)
+            if not os.path.isfile(input_path):
+                raise FileNotFoundError(f"Input file not found on disk: {input_path}")
 
-    def optimize_file(
-        self,
-        input_file: str,
-        output_file: str,
-        crf: int = 26,
-    ) -> tuple[bool, int, int]:
-        """
-        Run FFmpeg optimization preserving metadata and file timestamps.
-        Returns: (success, original_size, optimized_size)
-        """
-        if not shutil.which("ffmpeg"):
-            raise RuntimeError("FFmpeg is not installed or not in system PATH.")
+            orig_size = os.path.getsize(input_path)
+            orig_hash = self._extractor.calculate_file_hash(input_path)
+            orig_metadata = self._extractor.extract_metadata(input_path)
+            _, orig_ext = os.path.splitext(input_path)
+            orig_ext = orig_ext.lstrip(".").lower()
 
-        if not os.path.exists(input_file):
-            raise FileNotFoundError(f"Input file not found: {input_file}")
+            base_no_ext, _ = os.path.splitext(input_path)
+            temp_output = f"{base_no_ext}.optimized.tmp.mp4"
+            final_output = f"{base_no_ext}.mp4"
+            backup_path = f"{input_path}.bak" if keep_backup else None
 
-        orig_size = os.path.getsize(input_file)
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-i", input_file,
-            "-map", "0",
-            "-map_metadata", "0",
-            "-c:v", "libx265",
-            "-crf", str(crf),
-            "-preset", "medium",
-            "-tag:v", "hvc1",
-            "-c:a", "copy",
-            output_file,
-        ]
+            # Create pending conversion record
+            conversion = MediaConversion(
+                media_id=item.id,
+                media_uid=item.uid,
+                status="pending",
+                original_file_path=input_path,
+                optimized_file_path=final_output,
+                backup_file_path=backup_path,
+                original_hash=orig_hash,
+                original_size=orig_size,
+                original_extension=orig_ext,
+                optimized_extension="mp4",
+                original_metadata=orig_metadata,
+            )
+            self._conversion_repository.create(session, conversion)
+            session.commit()
 
-        logger.info("Executing command: %s", " ".join(cmd))
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if result.returncode != 0:
-            logger.error("FFmpeg failed: %s", result.stderr)
-            return False, orig_size, 0
+            # Execute conversion
+            result = self._converter.convert(input_path, temp_output, max_height=max_height)
 
-        # Preserve original modification and access times
-        stat = os.stat(input_file)
-        os.utime(output_file, (stat.st_atime, stat.st_mtime))
+            if not result.success:
+                conversion.status = "failed"
+                conversion.error_message = result.error_message
+                conversion.duration_seconds = result.duration_seconds
+                session.commit()
+                return conversion
 
-        optimized_size = os.path.getsize(output_file)
-        return True, orig_size, optimized_size
+            # Extract optimized file metadata
+            opt_hash = self._extractor.calculate_file_hash(temp_output)
+            opt_metadata = self._extractor.extract_metadata(temp_output)
+
+            # Apply replacement
+            if replace_in_place:
+                if keep_backup and backup_path:
+                    # Move original to .bak
+                    shutil.move(input_path, backup_path)
+                elif not keep_backup and os.path.exists(input_path) and input_path != final_output:
+                    os.remove(input_path)
+
+                # Move temp optimized to final output path
+                shutil.move(temp_output, final_output)
+
+                # Update MediaItem in DB
+                db_item = self._media_repository.get_by_uid(session, item.uid)
+                if db_item:
+                    rel_dir = os.path.dirname(db_item.file_path)
+                    new_file_name = os.path.basename(final_output)
+                    db_item.file_name = new_file_name
+                    db_item.file_path = os.path.join(rel_dir, new_file_name) if rel_dir else new_file_name
+                    db_item.extension = "mp4"
+                    db_item.file_size = result.optimized_size
+                    db_item.file_hash = opt_hash
+                    db_item.codec = "hevc"
+
+            conversion.status = "completed"
+            conversion.optimized_size = result.optimized_size
+            conversion.optimized_hash = opt_hash
+            conversion.optimized_metadata = opt_metadata
+            conversion.duration_seconds = result.duration_seconds
+            conversion.completed_at = datetime.utcnow()
+            session.commit()
+
+            return conversion
+        finally:
+            session.close()
+
+    def revert_conversion(self, conversion_id: int) -> tuple[bool, str]:
+        """Revert a previously completed conversion using its backup file."""
+        session = self._media_repository.get_session()
+        try:
+            conv = self._conversion_repository.get_by_id(session, conversion_id)
+            if not conv:
+                return False, f"Conversion ID {conversion_id} not found."
+
+            if conv.status != "completed":
+                return False, f"Cannot revert conversion with status '{conv.status}'."
+
+            backup_path = conv.backup_file_path
+            if not backup_path or not os.path.isfile(backup_path):
+                return False, f"Backup file not found at: {backup_path}"
+
+            optimized_path = conv.optimized_file_path
+            orig_path = conv.original_file_path
+
+            # Remove current optimized file if it exists
+            if optimized_path and os.path.isfile(optimized_path):
+                os.remove(optimized_path)
+
+            # Move backup back to original
+            shutil.move(backup_path, orig_path)
+
+            # Restore MediaItem in DB
+            db_item = self._media_repository.get_by_uid(session, conv.media_uid)
+            if db_item:
+                rel_dir = os.path.dirname(db_item.file_path)
+                orig_file_name = os.path.basename(orig_path)
+                db_item.file_name = orig_file_name
+                db_item.file_path = os.path.join(rel_dir, orig_file_name) if rel_dir else orig_file_name
+                db_item.extension = conv.original_extension
+                db_item.file_size = conv.original_size
+                db_item.file_hash = conv.original_hash
+
+            conv.status = "reverted"
+            session.commit()
+
+            return True, f"Successfully restored original file for media {conv.media_uid}."
+        finally:
+            session.close()
