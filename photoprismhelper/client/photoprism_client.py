@@ -168,3 +168,21 @@ class PhotoprismClient:
         except Exception as e:
             logger.warning("Failed to add label '%s' to photo %s: %s", label_name, uid, e)
             return False
+
+    def get_counts(self) -> dict[str, int]:
+        """Fetch catalog counts from PhotoPrism config endpoint."""
+        try:
+            self.authenticate()
+            resp = self._session.get(
+                f"{self.base_url}/api/v1/config",
+                headers=self._get_headers(),
+                verify=self.verify_ssl,
+                timeout=self.timeout_seconds,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("count") or {}
+        except Exception as e:
+            logger.warning("Failed to fetch photo counts: %s", e)
+        return {}
+

@@ -37,6 +37,7 @@ class MediaSyncService:
         batch_size: int = 100,
         max_items: int | None = None,
         query: str = "",
+        progress_callback: Any | None = None,
     ) -> SyncResult:
         """Fetch media items from PhotoPrism and upsert them into MariaDB."""
         offset = 0
@@ -56,7 +57,7 @@ class MediaSyncService:
                     break
                 fetch_count = min(batch_size, remaining)
 
-            logger.info("Fetching batch from offset %d (count=%d)...", offset, fetch_count)
+            logger.debug("Fetching batch from offset %d (count=%d)...", offset, fetch_count)
             photos = self._client.get_photos(count=fetch_count, offset=offset, query=query)
             if not photos:
                 logger.info("No more photos returned from PhotoPrism.")
@@ -80,7 +81,10 @@ class MediaSyncService:
                         break
 
             offset += fetch_count
-            logger.info("Processed %d items so far.", total_processed)
+            logger.debug("Processed %d items so far.", total_processed)
+
+            if progress_callback:
+                progress_callback(len(photos), total_processed)
 
             if max_items is not None and total_processed >= max_items:
                 break

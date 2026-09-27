@@ -131,7 +131,7 @@ class DefaultContainer:
         self.injector.binder.bind(DbInitCommand, to=DbInitCommand(db_manager, app_config))
         self.injector.binder.bind(
             MediaSyncCommand,
-            to=MediaSyncCommand(db_manager, media_sync_service, storage_analysis_service),
+            to=MediaSyncCommand(db_manager, photoprism_client, media_sync_service, storage_analysis_service),
         )
         self.injector.binder.bind(MediaStatsCommand, to=MediaStatsCommand(storage_analysis_service))
         self.injector.binder.bind(TagCommand, to=TagCommand(tag_service))
