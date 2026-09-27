@@ -76,7 +76,13 @@ class StorageAnalysisService:
             items = self._repository.find_largest_files(session, limit=limit, media_type=media_type)
             rows = []
             for item in items:
-                duration_str = f"{item.duration:.1f}s" if item.duration else "-"
+                duration_str = "-"
+                if item.duration:
+                    sec = item.duration / 1e9 if item.duration > 100_000 else item.duration
+                    if sec >= 60:
+                        duration_str = f"{int(sec // 60)}m {int(sec % 60)}s"
+                    else:
+                        duration_str = f"{sec:.1f}s"
                 dims = f"{item.width}x{item.height}" if item.width and item.height else "-"
                 rows.append([
                     item.uid[:12],
