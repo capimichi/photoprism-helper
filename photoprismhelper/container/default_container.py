@@ -128,7 +128,13 @@ class DefaultContainer:
         tag_service = TagService(photoprism_client, media_repository)
         self.injector.binder.bind(TagService, to=tag_service)
 
-        video_optimizer_service = VideoOptimizerService(media_repository, media_conversion_repository, storage_analysis_service)
+        video_optimizer_service = VideoOptimizerService(
+            media_repository,
+            media_conversion_repository,
+            storage_analysis_service,
+            photoprism_client=photoprism_client,
+            originals_path=self.photoprism_originals_path,
+        )
         self.injector.binder.bind(VideoOptimizerService, to=video_optimizer_service)
 
         # Commands

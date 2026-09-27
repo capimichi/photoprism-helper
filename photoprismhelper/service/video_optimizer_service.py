@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 from injector import inject
 
+from photoprismhelper.client.photoprism_client import PhotoprismClient
 from photoprismhelper.entity.media_conversion import MediaConversion
 from photoprismhelper.entity.media_item import MediaItem
 from photoprismhelper.repository.media_conversion_repository import MediaConversionRepository
@@ -25,14 +26,18 @@ class VideoOptimizerService:
         media_repository: MediaRepository,
         conversion_repository: MediaConversionRepository,
         storage_analysis_service: StorageAnalysisService,
+        photoprism_client: PhotoprismClient | None = None,
         converter: VideoConverter | None = None,
         extractor: MetadataExtractor | None = None,
+        originals_path: str | None = None,
     ) -> None:
         self._media_repository = media_repository
         self._conversion_repository = conversion_repository
         self._storage_analysis_service = storage_analysis_service
+        self._photoprism_client = photoprism_client
         self._converter = converter or VideoConverter()
         self._extractor = extractor or MetadataExtractor()
+        self._originals_path = originals_path or os.getenv("PHOTOPRISM_ORIGINALS_PATH", "/photoprism/originals")
 
     def get_candidate_videos(
         self,
@@ -51,10 +56,17 @@ class VideoOptimizerService:
 
     def resolve_disk_path(self, file_path: str) -> str:
         """Resolve the absolute path of the file on disk."""
-        originals_dir = os.getenv("PHOTOPRISM_ORIGINALS_PATH", "/photoprism/originals")
         if os.path.isabs(file_path):
             return file_path
-        return os.path.join(originals_dir, file_path)
+        return os.path.join(self._originals_path, file_path)
+
+    def get_relative_subfolder(self, file_path: str) -> str:
+        """Extract the subfolder relative to PhotoPrism originals."""
+        if os.path.isabs(file_path) and self._originals_path and file_path.startswith(self._originals_path):
+            rel = os.path.relpath(os.path.dirname(file_path), self._originals_path)
+            return "" if rel == "." else rel
+        dirname = os.path.dirname(file_path)
+        return "" if dirname in (".", "/") else dirname
 
     def optimize_media(
         self,
@@ -62,6 +74,7 @@ class VideoOptimizerService:
         keep_backup: bool = True,
         replace_in_place: bool = True,
         max_height: int = 1080,
+        notify_photoprism: bool = True,
     ) -> MediaConversion:
         """Transcode and optimize a single video item, record in media_conversion, and update media."""
         session = self._media_repository.get_session()
@@ -135,6 +148,15 @@ class VideoOptimizerService:
                     db_item.file_hash = opt_hash
                     db_item.codec = "hevc"
 
+                # Notify PhotoPrism to re-index the affected subfolder
+                if notify_photoprism and self._photoprism_client:
+                    subfolder = self.get_relative_subfolder(final_output)
+                    logger.info("Notifying PhotoPrism to re-index folder: '%s'...", subfolder)
+                    try:
+                        self._photoprism_client.trigger_index(path=subfolder, cleanup=True)
+                    except Exception as e:
+                        logger.warning("Could not notify PhotoPrism for re-index: %s", e)
+
             conversion.status = "completed"
             conversion.optimized_size = result.optimized_size
             conversion.optimized_hash = opt_hash
@@ -147,7 +169,7 @@ class VideoOptimizerService:
         finally:
             session.close()
 
-    def revert_conversion(self, conversion_id: int) -> tuple[bool, str]:
+    def revert_conversion(self, conversion_id: int, notify_photoprism: bool = True) -> tuple[bool, str]:
         """Revert a previously completed conversion using its backup file."""
         session = self._media_repository.get_session()
         try:
@@ -185,6 +207,15 @@ class VideoOptimizerService:
 
             conv.status = "reverted"
             session.commit()
+
+            # Notify PhotoPrism to re-index folder after revert
+            if notify_photoprism and self._photoprism_client:
+                subfolder = self.get_relative_subfolder(orig_path)
+                logger.info("Notifying PhotoPrism to re-index folder after revert: '%s'...", subfolder)
+                try:
+                    self._photoprism_client.trigger_index(path=subfolder, cleanup=True)
+                except Exception as e:
+                    logger.warning("Could not notify PhotoPrism for re-index after revert: %s", e)
 
             return True, f"Successfully restored original file for media {conv.media_uid}."
         finally:

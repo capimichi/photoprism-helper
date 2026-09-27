@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 import requests
 
@@ -185,4 +186,68 @@ class PhotoprismClient:
         except Exception as e:
             logger.warning("Failed to fetch photo counts: %s", e)
         return {}
+
+    def trigger_index(
+        self,
+        path: str = "",
+        rescan: bool = False,
+        cleanup: bool = True,
+        wait_if_busy: bool = False,
+        max_retries: int = 3,
+        retry_delay_seconds: float = 5.0,
+    ) -> dict[str, Any]:
+        """Trigger PhotoPrism indexing for a subfolder or the entire library.
+
+        :param path: Subfolder relative to originals (e.g. "2025/02"). If empty, indexes all originals.
+        :param rescan: If True, forces rescan of unchanged files.
+        :param cleanup: If True, removes orphaned index entries and missing files from search results.
+        :param wait_if_busy: If True and PhotoPrism returns 'Already running', wait and retry.
+        :param max_retries: Number of retries when busy.
+        :param retry_delay_seconds: Seconds between retries.
+        """
+        if not self._session_token:
+            self.authenticate()
+
+        url = f"{self.base_url}/api/v1/index"
+        payload = {
+            "path": path,
+            "rescan": rescan,
+            "cleanup": cleanup,
+        }
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = self._session.post(
+                    url,
+                    json=payload,
+                    headers=self._get_headers(),
+                    verify=self.verify_ssl,
+                    timeout=self.timeout_seconds,
+                )
+                if resp.status_code == 200:
+                    return resp.json()
+
+                if resp.status_code == 500 and "Already running" in resp.text:
+                    if wait_if_busy and attempt < max_retries:
+                        logger.info(
+                            "PhotoPrism indexing is already running. Retrying in %.1fs (%d/%d)...",
+                            retry_delay_seconds,
+                            attempt,
+                            max_retries,
+                        )
+                        time.sleep(retry_delay_seconds)
+                        continue
+                    logger.warning("PhotoPrism indexing is already running. Notification skipped.")
+                    return {"status": "busy", "error": "Already running"}
+
+                resp.raise_for_status()
+                return resp.json()
+            except requests.exceptions.RequestException as e:
+                logger.warning("Failed to trigger PhotoPrism indexing for '%s': %s", path, e)
+                if attempt == max_retries:
+                    return {"status": "error", "error": str(e)}
+                time.sleep(retry_delay_seconds)
+
+        return {"status": "busy", "error": "Already running"}
+
 

@@ -27,6 +27,7 @@ class VideoOptimizeCommand(AbstractCommand):
         fn = click.option("--dry-run", is_flag=True, default=False, help="List candidates without converting.")(fn)
         fn = click.option("--interactive/--no-interactive", "-i/-y", default=True, help="Prompt before converting and replacing.")(fn)
         fn = click.option("--keep-backup/--no-backup", default=True, help="Keep .bak of original file (default: True).")(fn)
+        fn = click.option("--notify/--no-notify", default=True, help="Notify PhotoPrism to re-index the folder (default: True).")(fn)
         fn = click.option("--revert", "revert_id", default=None, type=int, help="Revert a conversion by its ID.")(fn)
         fn = click.option("--history", is_flag=True, default=False, help="Show conversion history.")(fn)
         return fn
@@ -38,6 +39,7 @@ class VideoOptimizeCommand(AbstractCommand):
         dry_run: bool = False,
         interactive: bool = True,
         keep_backup: bool = True,
+        notify: bool = True,
         revert_id: int | None = None,
         history: bool = False,
     ) -> None:
@@ -45,7 +47,7 @@ class VideoOptimizeCommand(AbstractCommand):
         # Handle revert
         if revert_id is not None:
             click.echo(f"Attempting to revert conversion #{revert_id}...")
-            ok, msg = self._optimizer_service.revert_conversion(revert_id)
+            ok, msg = self._optimizer_service.revert_conversion(revert_id, notify_photoprism=notify)
             if ok:
                 click.secho(f"✓ {msg}", fg="green")
             else:
@@ -109,6 +111,7 @@ class VideoOptimizeCommand(AbstractCommand):
                 keep_backup=keep_backup,
                 replace_in_place=True,
                 max_height=1080,
+                notify_photoprism=notify,
             )
 
             if conv.status == "completed":
@@ -120,6 +123,8 @@ class VideoOptimizeCommand(AbstractCommand):
                 click.echo(f"    - Optimized size: {opt_fmt} (-{pct:.1f}%, saved {saved_fmt})")
                 if keep_backup:
                     click.echo(f"    - Backup saved at: {conv.backup_file_path}")
+                if notify:
+                    click.echo("    - PhotoPrism re-index triggered.")
             else:
                 click.secho(f"  ✗ Conversion failed: {conv.error_message}", fg="red")
 
