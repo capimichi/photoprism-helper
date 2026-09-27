@@ -97,6 +97,10 @@ class MediaMapper:
         suggested_tags_list = cls.extract_suggested_tags_from_folder(folder_path)
         suggested_tags_str = ", ".join(suggested_tags_list) if suggested_tags_list else None
 
+        duration_val = float(duration) if duration else None
+        if duration_val and duration_val > 100_000:
+            duration_val = duration_val / 1e9
+
         return MediaItem(
             uid=uid,
             file_hash=file_hash,
@@ -109,7 +113,7 @@ class MediaMapper:
             mime_type=mime_type,
             width=int(width) if width else None,
             height=int(height) if height else None,
-            duration=float(duration) if duration else None,
+            duration=duration_val,
             codec=codec,
             fps=float(fps) if fps else None,
             taken_at=taken_at,

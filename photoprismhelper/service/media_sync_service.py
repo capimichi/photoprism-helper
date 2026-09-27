@@ -32,7 +32,12 @@ class MediaSyncService:
         self._repository = repository
         self._mapper = mapper
 
-    def sync(self, batch_size: int = 100, max_items: int | None = None) -> SyncResult:
+    def sync(
+        self,
+        batch_size: int = 100,
+        max_items: int | None = None,
+        query: str = "",
+    ) -> SyncResult:
         """Fetch media items from PhotoPrism and upsert them into MariaDB."""
         offset = 0
         total_processed = 0
@@ -41,7 +46,7 @@ class MediaSyncService:
         videos_count = 0
         other_count = 0
 
-        logger.info("Starting PhotoPrism media synchronization...")
+        logger.info("Starting PhotoPrism media synchronization (query='%s')...", query)
 
         while True:
             fetch_count = batch_size
@@ -52,7 +57,7 @@ class MediaSyncService:
                 fetch_count = min(batch_size, remaining)
 
             logger.info("Fetching batch from offset %d (count=%d)...", offset, fetch_count)
-            photos = self._client.get_photos(count=fetch_count, offset=offset)
+            photos = self._client.get_photos(count=fetch_count, offset=offset, query=query)
             if not photos:
                 logger.info("No more photos returned from PhotoPrism.")
                 break
@@ -71,10 +76,13 @@ class MediaSyncService:
                     else:
                         other_count += 1
 
-            offset += len(photos)
+                    if max_items is not None and total_processed >= max_items:
+                        break
+
+            offset += fetch_count
             logger.info("Processed %d items so far.", total_processed)
 
-            if len(photos) < fetch_count:
+            if max_items is not None and total_processed >= max_items:
                 break
 
         logger.info("Sync finished. Total processed: %d items.", total_processed)
