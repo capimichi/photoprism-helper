@@ -49,6 +49,39 @@ class MediaMapper:
 
         return tags
 
+    VIDEO_EXTENSIONS = (".mov", ".mp4", ".avi", ".mkv", ".m4v", ".3gp", ".webm")
+
+    @classmethod
+    def choose_media_file(cls, files: list[dict[str, Any]], media_type: str) -> dict[str, Any]:
+        """Select the most representative original media file instead of a sidecar preview."""
+        if not files:
+            return {}
+
+        # 1. For videos, prefer actual video file over thumbnail/sidecar JPG
+        if media_type == "video":
+            for f in files:
+                name = (f.get("Name") or "").lower()
+                if (f.get("Video") or f.get("MediaType") == "video") and not name.endswith(".jpg"):
+                    return f
+            for f in files:
+                name = (f.get("Name") or "").lower()
+                if any(name.endswith(ext) for ext in cls.VIDEO_EXTENSIONS):
+                    return f
+
+        # 2. Look for an original file (Root != 'sidecar' and != 'cache')
+        originals = [f for f in files if f.get("Root") not in ("sidecar", "cache")]
+        if originals:
+            for f in originals:
+                if f.get("Primary"):
+                    return f
+            return max(originals, key=lambda f: int(f.get("Size") or 0))
+
+        # 3. Fallback to Primary file or first available
+        for f in files:
+            if f.get("Primary"):
+                return f
+        return files[0]
+
     @classmethod
     def to_entity(cls, photo_data: dict[str, Any]) -> MediaItem:
         uid = photo_data.get("UID", "")
@@ -57,13 +90,8 @@ class MediaMapper:
         is_favorite = bool(photo_data.get("Favorite", False))
         taken_at = cls.parse_datetime(photo_data.get("TakenAt"))
 
-        # Inspect files array inside photo data to find primary file information
         files = photo_data.get("Files") or []
-        primary_file = files[0] if files else {}
-        for f in files:
-            if f.get("Primary"):
-                primary_file = f
-                break
+        primary_file = cls.choose_media_file(files, media_type)
 
         file_name = (
             primary_file.get("Name")
@@ -74,8 +102,31 @@ class MediaMapper:
         file_path = photo_data.get("FileName") or primary_file.get("Name") or file_name
         folder_path = photo_data.get("Path") or os.path.dirname(file_path) or ""
 
+        # If file_name or file_path points to a sidecar like video.mov.jpg, strip .jpg
+        for vid_ext in cls.VIDEO_EXTENSIONS:
+            sidecar_suffix = f"{vid_ext}.jpg"
+            if file_name.lower().endswith(sidecar_suffix):
+                file_name = file_name[:-4]
+            if file_path.lower().endswith(sidecar_suffix):
+                file_path = file_path[:-4]
+                media_type = "video"
+                break
+
         file_hash = primary_file.get("Hash") or photo_data.get("Hash")
         file_size = int(primary_file.get("Size") or photo_data.get("Size") or 0)
+
+        # If originals path is accessible on disk, verify actual size
+        originals_dir = os.getenv("PHOTOPRISM_ORIGINALS_PATH", "/photoprism/originals")
+        if os.path.isdir(originals_dir):
+            disk_file = os.path.join(originals_dir, file_path)
+            if os.path.isfile(disk_file):
+                try:
+                    disk_size = os.path.getsize(disk_file)
+                    if disk_size > 0:
+                        file_size = disk_size
+                except OSError:
+                    pass
+
         mime_type = primary_file.get("Mime")
         width = primary_file.get("Width") or photo_data.get("Width")
         height = primary_file.get("Height") or photo_data.get("Height")
@@ -86,6 +137,11 @@ class MediaMapper:
         # Determine extension
         _, ext = os.path.splitext(file_name)
         extension = ext.lstrip(".").lower()
+        if not extension and "." in file_path:
+            extension = os.path.splitext(file_path)[1].lstrip(".").lower()
+
+        if media_type == "unknown" and any(file_name.lower().endswith(ext) for ext in cls.VIDEO_EXTENSIONS):
+            media_type = "video"
 
         # Existing tags/keywords
         keywords = ""
