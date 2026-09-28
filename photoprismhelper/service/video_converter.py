@@ -49,7 +49,13 @@ class VideoConverter:
         if not self._ffmpeg_bin:
             return False
 
-        vf = cfg.scale_filter_template.format(height=128)
+        if cfg.name == "hevc_vaapi":
+            probe_global = ["-vaapi_device", "/dev/dri/renderD128"]
+            probe_vf = "format=nv12,hwupload"
+        else:
+            probe_global = cfg.global_args
+            probe_vf = cfg.scale_filter_template.format(height=128)
+
         test_cmd = [
             self._ffmpeg_bin,
             "-v",
@@ -58,9 +64,9 @@ class VideoConverter:
             "lavfi",
             "-i",
             "color=c=black:s=128x128:d=0.04",
-            *cfg.global_args,
+            *probe_global,
             "-vf",
-            vf,
+            probe_vf,
             *cfg.output_args,
             "-frames:v",
             "1",
@@ -101,8 +107,9 @@ class VideoConverter:
                     name="hevc_vaapi",
                     is_hardware=True,
                     description=f"Linux VAAPI Hardware Acceleration ({vaapi_dev})",
-                    global_args=["-vaapi_device", vaapi_dev],
-                    scale_filter_template="format=p010le|nv12,hwupload,scale_vaapi=w=-2:h={height}",
+                    global_args=[],
+                    input_args=["-hwaccel", "vaapi", "-hwaccel_device", vaapi_dev, "-hwaccel_output_format", "vaapi"],
+                    scale_filter_template="scale_vaapi=w=-2:h={height}",
                     output_args=["-c:v", "hevc_vaapi", "-qp", "24"],
                 )
             )
