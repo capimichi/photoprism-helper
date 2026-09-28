@@ -75,7 +75,7 @@ class VideoOptimizeCommand(AbstractCommand):
                 else:
                     duration_str = f"{sec:.1f}s"
             rows.append([
-                c.uid[:12],
+                c.uid,
                 c.file_name[:35],
                 c.extension.upper(),
                 self._storage_analysis_service.format_bytes(c.file_size),
@@ -143,7 +143,7 @@ class VideoOptimizeCommand(AbstractCommand):
                 dt = cv.created_at.strftime("%Y-%m-%d %H:%M") if cv.created_at else "-"
                 rows.append([
                     cv.id,
-                    cv.media_uid[:12],
+                    cv.media_uid,
                     cv.status,
                     f"{cv.original_extension} -> {cv.optimized_extension}",
                     self._storage_analysis_service.format_bytes(cv.original_size),
