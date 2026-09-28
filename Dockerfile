@@ -12,6 +12,9 @@ RUN apt-get update && apt-get install --yes --no-install-recommends \
     ca-certificates \
     ffmpeg \
     libimage-exiftool-perl \
+    intel-media-va-driver \
+    mesa-va-drivers \
+    vainfo \
     build-essential \
     default-libmysqlclient-dev \
     && rm -rf /var/lib/apt/lists/*

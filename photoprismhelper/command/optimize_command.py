@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import click
 from injector import inject
 from tabulate import tabulate
@@ -105,28 +106,47 @@ class VideoOptimizeCommand(AbstractCommand):
                     click.echo("  Skipped.")
                     continue
 
-            click.echo("  Encoding and cloning metadata with ffmpeg + exiftool...")
-            conv = self._optimizer_service.optimize_media(
-                item,
-                keep_backup=keep_backup,
-                replace_in_place=True,
-                max_height=1080,
-                notify_photoprism=notify,
-            )
+            with tempfile.TemporaryDirectory(prefix="pp_opt_") as tmp_dir:
+                click.echo("  Encoding and cloning metadata in local staging (/tmp)...")
+                draft = self._optimizer_service.prepare_optimization(
+                    item,
+                    tmp_dir=tmp_dir,
+                    max_height=1080,
+                )
 
-            if conv.status == "completed":
-                opt_fmt = self._storage_analysis_service.format_bytes(conv.optimized_size or 0)
-                saved_fmt = self._storage_analysis_service.format_bytes(conv.original_size - (conv.optimized_size or 0))
-                pct = ((conv.original_size - (conv.optimized_size or 0)) / conv.original_size) * 100
-                click.secho(f"  ✓ Conversion #{conv.id} succeeded in {conv.duration_seconds:.1f}s!", fg="green")
+                if not draft.success:
+                    click.secho(f"  ✗ Conversion failed: {draft.error_message}", fg="red")
+                    continue
+
+                opt_fmt = self._storage_analysis_service.format_bytes(draft.optimized_size)
+                saved_fmt = self._storage_analysis_service.format_bytes(draft.original_size - draft.optimized_size)
+                pct = ((draft.original_size - draft.optimized_size) / draft.original_size) * 100
+
+                click.secho(
+                    f"  ✓ Transcoding finished in {draft.duration_seconds:.1f}s (encoder: {draft.encoder_used})",
+                    fg="green",
+                )
                 click.echo(f"    - Original size: {size_fmt}")
                 click.echo(f"    - Optimized size: {opt_fmt} (-{pct:.1f}%, saved {saved_fmt})")
+                click.echo(f"    - Integrity check: PASSED ({draft.integrity_message})")
+
+                if interactive:
+                    confirm_apply = click.confirm(f"  Apply replacement on NAS for {item.file_name}?", default=True)
+                    if not confirm_apply:
+                        click.echo("  Cancelled. Local temp discarded, NAS untouched.")
+                        continue
+
+                conv = self._optimizer_service.apply_optimization(
+                    draft,
+                    keep_backup=keep_backup,
+                    notify_photoprism=notify,
+                )
+
+                click.secho(f"  ✓ Conversion #{conv.id} applied to NAS!", fg="green")
                 if keep_backup:
                     click.echo(f"    - Backup saved at: {conv.backup_file_path}")
                 if notify:
                     click.echo("    - PhotoPrism re-index triggered.")
-            else:
-                click.secho(f"  ✗ Conversion failed: {conv.error_message}", fg="red")
 
     def _show_history(self) -> None:
         session = self._optimizer_service._media_repository.get_session()

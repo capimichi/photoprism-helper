@@ -6,12 +6,23 @@ import os
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from photoprismhelper.service.metadata_extractor import MetadataExtractor
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class EncoderConfig:
+    name: str
+    is_hardware: bool
+    description: str
+    global_args: list[str] = field(default_factory=list)
+    input_args: list[str] = field(default_factory=list)
+    scale_filter_template: str = "scale=-2:{height}"
+    output_args: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -21,7 +32,9 @@ class ConversionResult:
     original_size: int
     optimized_size: int
     duration_seconds: float
+    encoder_used: str = ""
     error_message: str | None = None
+    integrity_message: str = ""
 
 
 class VideoConverter:
@@ -29,25 +42,111 @@ class VideoConverter:
         self._extractor = metadata_extractor or MetadataExtractor()
         self._ffmpeg_bin = shutil.which("ffmpeg")
         self._ffprobe_bin = shutil.which("ffprobe")
+        self._cached_encoder: EncoderConfig | None = None
 
-    def _detect_encoder(self) -> tuple[str, list[str]]:
-        """Detect the best available H.265/HEVC encoder and parameters."""
+    def _probe_encoder(self, cfg: EncoderConfig) -> bool:
+        """Run a minimal 1-frame in-memory probe to verify if the encoder actually works."""
         if not self._ffmpeg_bin:
-            return "libx265", ["-crf", "25", "-preset", "fast"]
+            return False
 
+        vf = cfg.scale_filter_template.format(height=16)
+        test_cmd = [
+            self._ffmpeg_bin,
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=16x16:d=0.04",
+            *cfg.global_args,
+            "-vf",
+            vf,
+            *cfg.output_args,
+            "-frames:v",
+            "1",
+            "-f",
+            "null",
+            "-",
+        ]
         try:
-            res = subprocess.run([self._ffmpeg_bin, "-encoders"], capture_output=True, text=True)
-            output = res.stdout
-            if "hevc_videotoolbox" in output:
-                # Apple Silicon hardware encoder
-                return "hevc_videotoolbox", ["-b:v", "4500k", "-pix_fmt", "p010le"]
-            if "libx265" in output:
-                # Standard high quality CPU encoder
-                return "libx265", ["-crf", "25", "-preset", "fast", "-pix_fmt", "yuv420p10le"]
+            res = subprocess.run(test_cmd, capture_output=True, text=True, timeout=6)
+            return res.returncode == 0
         except Exception as e:
-            logger.warning("Error detecting ffmpeg encoders: %s", e)
+            logger.debug("Encoder probe failed for %s: %s", cfg.name, e)
+            return False
 
-        return "libx265", ["-crf", "25", "-preset", "fast"]
+    def detect_encoder(self) -> EncoderConfig:
+        """Detect the best available H.265/HEVC encoder (Hardware GPU or CPU fallback)."""
+        if self._cached_encoder is not None:
+            return self._cached_encoder
+
+        if not self._ffmpeg_bin:
+            logger.warning("ffmpeg binary not found. Falling back to default CPU config.")
+            self._cached_encoder = EncoderConfig(
+                name="libx265",
+                is_hardware=False,
+                description="Software CPU fallback (libx265)",
+                output_args=["-c:v", "libx265", "-crf", "22", "-preset", "medium"],
+            )
+            return self._cached_encoder
+
+        # Candidate encoders ordered by preference
+        candidates: list[EncoderConfig] = []
+
+        # 1. Linux VAAPI (Intel / AMD via /dev/dri/renderD128)
+        vaapi_dev = "/dev/dri/renderD128"
+        if os.path.exists(vaapi_dev):
+            candidates.append(
+                EncoderConfig(
+                    name="hevc_vaapi",
+                    is_hardware=True,
+                    description=f"Linux VAAPI Hardware Acceleration ({vaapi_dev})",
+                    global_args=["-vaapi_device", vaapi_dev],
+                    scale_filter_template="format=p010le|nv12,hwupload,scale_vaapi=w=-2:h={height}",
+                    output_args=["-c:v", "hevc_vaapi", "-qp", "24"],
+                )
+            )
+
+        # 2. Apple Silicon VideoToolbox (macOS)
+        candidates.append(
+            EncoderConfig(
+                name="hevc_videotoolbox",
+                is_hardware=True,
+                description="Apple Silicon VideoToolbox Hardware Acceleration",
+                scale_filter_template="scale=-2:{height}",
+                output_args=["-c:v", "hevc_videotoolbox", "-b:v", "5000k", "-pix_fmt", "p010le"],
+            )
+        )
+
+        # 3. NVIDIA NVENC (CUDA / NVENC)
+        candidates.append(
+            EncoderConfig(
+                name="hevc_nvenc",
+                is_hardware=True,
+                description="NVIDIA NVENC Hardware Acceleration",
+                scale_filter_template="scale=-2:{height}",
+                output_args=["-c:v", "hevc_nvenc", "-cq", "24", "-preset", "p5", "-pix_fmt", "p010le"],
+            )
+        )
+
+        # Try hardware candidates first
+        for candidate in candidates:
+            logger.debug("Probing hardware encoder '%s'...", candidate.name)
+            if self._probe_encoder(candidate):
+                logger.info("Hardware acceleration detected and verified: %s (%s)", candidate.name, candidate.description)
+                self._cached_encoder = candidate
+                return self._cached_encoder
+
+        # Safe fallback: Software CPU (libx265)
+        logger.info("No compatible GPU accelerator detected. Using CPU encoder: libx265 (preset medium, crf 22).")
+        self._cached_encoder = EncoderConfig(
+            name="libx265",
+            is_hardware=False,
+            description="Software CPU (libx265)",
+            scale_filter_template="scale=-2:{height}",
+            output_args=["-c:v", "libx265", "-crf", "22", "-preset", "medium", "-pix_fmt", "yuv420p10le"],
+        )
+        return self._cached_encoder
 
     def get_stream_info(self, file_path: str) -> dict[str, Any]:
         """Inspect video streams using ffprobe."""
@@ -101,7 +200,8 @@ class VideoConverter:
         if in_has_audio and not out_has_audio:
             return False, "Input video has audio but converted video has none."
 
-        return True, "Verification passed."
+        msg = f"duration: {out_duration:.1f}s, streams verified"
+        return True, msg
 
     def convert(
         self,
@@ -125,20 +225,19 @@ class VideoConverter:
         orig_size = os.path.getsize(input_path)
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        encoder, encoder_args = self._detect_encoder()
-        # Scale to max 1080 vertical/horizontal while maintaining aspect ratio and even dimensions
-        scale_filter = f"scale=-2:{max_height}"
+        encoder_cfg = self.detect_encoder()
+        scale_filter = encoder_cfg.scale_filter_template.format(height=max_height)
 
         cmd = [
             self._ffmpeg_bin,
             "-y",
+            *encoder_cfg.global_args,
+            *encoder_cfg.input_args,
             "-i",
             input_path,
             "-vf",
             scale_filter,
-            "-c:v",
-            encoder,
-            *encoder_args,
+            *encoder_cfg.output_args,
             "-tag:v",
             "hvc1",
             "-c:a",
@@ -148,7 +247,14 @@ class VideoConverter:
             output_path,
         ]
 
-        logger.info("Starting ffmpeg conversion: %s -> %s (encoder: %s)", input_path, output_path, encoder)
+        logger.info(
+            "Starting ffmpeg conversion: %s -> %s (encoder: %s, hw: %s)",
+            input_path,
+            output_path,
+            encoder_cfg.name,
+            encoder_cfg.is_hardware,
+        )
+
         try:
             subprocess.run(cmd, capture_output=True, text=True, check=True)
         except subprocess.CalledProcessError as e:
@@ -159,6 +265,7 @@ class VideoConverter:
                 original_size=orig_size,
                 optimized_size=0,
                 duration_seconds=time.time() - start_time,
+                encoder_used=encoder_cfg.name,
                 error_message=f"ffmpeg error: {e.stderr[-300:] if e.stderr else 'unknown error'}",
             )
 
@@ -178,15 +285,24 @@ class VideoConverter:
                 original_size=orig_size,
                 optimized_size=0,
                 duration_seconds=elapsed,
+                encoder_used=encoder_cfg.name,
                 error_message=f"Verification failed: {msg}",
             )
 
         opt_size = os.path.getsize(output_path)
-        logger.info("Conversion successful! Original: %d bytes, Optimized: %d bytes (elapsed: %.1fs)", orig_size, opt_size, elapsed)
+        logger.info(
+            "Conversion successful! Original: %d bytes, Optimized: %d bytes (elapsed: %.1fs, encoder: %s)",
+            orig_size,
+            opt_size,
+            elapsed,
+            encoder_cfg.name,
+        )
         return ConversionResult(
             success=True,
             output_path=output_path,
             original_size=orig_size,
             optimized_size=opt_size,
             duration_seconds=elapsed,
+            encoder_used=encoder_cfg.name,
+            integrity_message=msg,
         )
