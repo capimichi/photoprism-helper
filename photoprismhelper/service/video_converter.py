@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -235,6 +236,10 @@ class VideoConverter:
         encoder_cfg = self.detect_encoder()
         scale_filter = encoder_cfg.scale_filter_template.format(height=max_height)
 
+        # Get total duration for percentage calculation
+        in_info = self.get_stream_info(input_path)
+        total_duration = float(in_info.get("format", {}).get("duration", 0) or 0)
+
         cmd = [
             self._ffmpeg_bin,
             "-y",
@@ -251,6 +256,9 @@ class VideoConverter:
             "copy",
             "-movflags",
             "+faststart",
+            "-progress",
+            "pipe:1",
+            "-nostats",
             output_path,
         ]
 
@@ -262,10 +270,62 @@ class VideoConverter:
             encoder_cfg.is_hardware,
         )
 
+        fps = "0"
+        speed = "1.0x"
+
         try:
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
-        except subprocess.CalledProcessError as e:
-            logger.error("ffmpeg failed with code %d: %s", e.returncode, e.stderr)
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+
+            if proc.stdout:
+                for line in proc.stdout:
+                    line = line.strip()
+                    if line.startswith("fps="):
+                        fps = line.split("=")[1].strip()
+                    elif line.startswith("speed="):
+                        speed = line.split("=")[1].strip()
+                    elif line.startswith("out_time="):
+                        t_str = line.split("=")[1].strip()
+                        parts = t_str.split(":")
+                        if len(parts) == 3 and total_duration > 0:
+                            try:
+                                curr_sec = float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+                                pct = min(100.0, (curr_sec / total_duration) * 100)
+                                bar_len = 20
+                                filled = int(bar_len * pct / 100)
+                                bar = "=" * filled + "-" * (bar_len - filled)
+                                curr_m, curr_s = int(curr_sec // 60), int(curr_sec % 60)
+                                tot_m, tot_s = int(total_duration // 60), int(total_duration % 60)
+                                sys.stdout.write(
+                                    f"\r  [Encoding] {pct:5.1f}% [{bar}] {curr_m:02d}:{curr_s:02d}/{tot_m:02d}:{tot_s:02d} ({fps} fps, {speed})"
+                                )
+                                sys.stdout.flush()
+                            except Exception:
+                                pass
+
+            proc.wait()
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+
+            if proc.returncode != 0:
+                err_text = proc.stderr.read() if proc.stderr else ""
+                logger.error("ffmpeg failed with code %d: %s", proc.returncode, err_text)
+                return ConversionResult(
+                    success=False,
+                    output_path=output_path,
+                    original_size=orig_size,
+                    optimized_size=0,
+                    duration_seconds=time.time() - start_time,
+                    encoder_used=encoder_cfg.name,
+                    error_message=f"ffmpeg error: {err_text[-300:] if err_text else 'unknown error'}",
+                )
+        except Exception as e:
+            logger.error("ffmpeg process failed: %s", e)
             return ConversionResult(
                 success=False,
                 output_path=output_path,
@@ -273,7 +333,7 @@ class VideoConverter:
                 optimized_size=0,
                 duration_seconds=time.time() - start_time,
                 encoder_used=encoder_cfg.name,
-                error_message=f"ffmpeg error: {e.stderr[-300:] if e.stderr else 'unknown error'}",
+                error_message=str(e),
             )
 
         # Clone metadata with exiftool
