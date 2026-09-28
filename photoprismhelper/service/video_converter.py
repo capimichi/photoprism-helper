@@ -49,7 +49,7 @@ class VideoConverter:
         if not self._ffmpeg_bin:
             return False
 
-        vf = cfg.scale_filter_template.format(height=16)
+        vf = cfg.scale_filter_template.format(height=128)
         test_cmd = [
             self._ffmpeg_bin,
             "-v",
@@ -57,7 +57,7 @@ class VideoConverter:
             "-f",
             "lavfi",
             "-i",
-            "color=c=black:s=16x16:d=0.04",
+            "color=c=black:s=128x128:d=0.04",
             *cfg.global_args,
             "-vf",
             vf,
