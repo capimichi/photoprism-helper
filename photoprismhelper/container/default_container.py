@@ -13,6 +13,7 @@ from photoprismhelper.command.db_init_command import DbInitCommand
 from photoprismhelper.command.media_stats_command import MediaStatsCommand
 from photoprismhelper.command.media_sync_command import MediaSyncCommand
 from photoprismhelper.command.optimize_command import VideoOptimizeCommand
+from photoprismhelper.command.stack_duplicates_command import VideoDuplicatesCommand
 from photoprismhelper.command.tag_command import TagCommand
 from photoprismhelper.config.app_config import AppConfig
 from photoprismhelper.manager.db_manager import DbManager
@@ -153,4 +154,13 @@ class DefaultContainer:
         self.injector.binder.bind(
             VideoOptimizeCommand,
             to=VideoOptimizeCommand(video_optimizer_service, storage_analysis_service),
+        )
+        self.injector.binder.bind(
+            VideoDuplicatesCommand,
+            to=VideoDuplicatesCommand(
+                media_file_repository,
+                media_repository,
+                video_optimizer_service,
+                storage_analysis_service,
+            ),
         )
