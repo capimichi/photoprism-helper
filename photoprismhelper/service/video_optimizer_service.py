@@ -327,20 +327,46 @@ class VideoOptimizerService:
             session.close()
 
     def get_stack_duplicates(self, media_uid: str, primary_file_name: str | None = None) -> list[MediaFile]:
-        """Find video duplicates in the stack (e.g. .00001, .00002 or secondary videos)."""
+        """Find video duplicates in the stack (e.g. .00001, .00002 or unoptimized duplicates)."""
         import re
 
         video_files = self.get_stack_video_files(media_uid)
         if len(video_files) <= 1:
             return []
 
+        # Find any completed conversion to protect the optimized output file
+        session = self._conversion_repository.get_session()
+        protected_names: set[str] = set()
+        try:
+            item = self._media_repository.get_by_uid(session, media_uid)
+            if item:
+                completed_conv = self._conversion_repository.get_latest_completed_for_media(session, item.id)
+                if completed_conv and completed_conv.optimized_file_path:
+                    protected_names.add(os.path.basename(completed_conv.optimized_file_path))
+        finally:
+            session.close()
+
         duplicates: list[MediaFile] = []
         for vf in video_files:
+            # Never mark protected optimized file as duplicate
+            if vf.file_name in protected_names:
+                continue
+
             name = vf.file_name.lower()
+            # 1. Matches numeric duplicate pattern like .00001.mov
             if re.search(r"\.\d{5}\.", name):
                 duplicates.append(vf)
-            elif primary_file_name and vf.file_name != primary_file_name and not vf.is_primary:
-                duplicates.append(vf)
+                continue
+
+            # 2. If an optimized .mp4 exists and this is an unoptimized older video (.mov)
+            if protected_names:
+                for prot in protected_names:
+                    prot_stem = os.path.splitext(prot)[0]
+                    vf_stem = os.path.splitext(vf.file_name)[0]
+                    if vf_stem == prot_stem and vf.file_name != prot:
+                        duplicates.append(vf)
+                        break
+
         return duplicates
 
     def remove_duplicate_file(

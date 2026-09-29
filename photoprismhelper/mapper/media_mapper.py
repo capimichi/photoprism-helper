@@ -58,30 +58,52 @@ class MediaMapper:
         if not files:
             return {}
 
+        # Filter out missing files
+        available = [f for f in files if not f.get("Missing")]
+        if not available:
+            available = files
+
         # 1. For videos, prefer actual video file over thumbnail/sidecar JPG
         if media_type == "video":
-            for f in files:
+            video_files = []
+            for f in available:
                 name = (f.get("Name") or "").lower()
                 if (f.get("Video") or f.get("MediaType") == "video") and not name.endswith(".jpg"):
-                    return f
-            for f in files:
-                name = (f.get("Name") or "").lower()
-                if any(name.endswith(ext) for ext in cls.VIDEO_EXTENSIONS):
-                    return f
+                    video_files.append(f)
+                elif any(name.endswith(ext) for ext in cls.VIDEO_EXTENSIONS) and not name.endswith(".jpg"):
+                    video_files.append(f)
+
+            if video_files:
+                # Prefer files without duplicate pattern like .00001.
+                clean_videos = [f for f in video_files if not re.search(r"\.\d{5}\.", f.get("Name") or "")]
+                candidates = clean_videos if clean_videos else video_files
+
+                # If an mp4 exists, prefer it
+                for f in candidates:
+                    if (f.get("Name") or "").lower().endswith(".mp4"):
+                        return f
+
+                for f in candidates:
+                    if f.get("Primary"):
+                        return f
+
+                return candidates[0]
 
         # 2. Look for an original file (Root != 'sidecar' and != 'cache')
-        originals = [f for f in files if f.get("Root") not in ("sidecar", "cache")]
+        originals = [f for f in available if f.get("Root") not in ("sidecar", "cache")]
         if originals:
-            for f in originals:
+            clean_originals = [f for f in originals if not re.search(r"\.\d{5}\.", f.get("Name") or "")]
+            candidates = clean_originals if clean_originals else originals
+            for f in candidates:
                 if f.get("Primary"):
                     return f
-            return max(originals, key=lambda f: int(f.get("Size") or 0))
+            return candidates[0]
 
         # 3. Fallback to Primary file or first available
-        for f in files:
+        for f in available:
             if f.get("Primary"):
                 return f
-        return files[0]
+        return available[0]
 
     @classmethod
     def to_entity(cls, photo_data: dict[str, Any]) -> MediaItem:
