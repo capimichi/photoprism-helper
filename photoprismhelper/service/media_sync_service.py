@@ -4,8 +4,10 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 from injector import inject
+from sqlalchemy import select
 
 from photoprismhelper.client.photoprism_client import PhotoprismClient
+from photoprismhelper.entity.media_conversion import MediaConversion
 from photoprismhelper.mapper.media_mapper import MediaMapper
 from photoprismhelper.repository.media_file_repository import MediaFileRepository
 from photoprismhelper.repository.media_repository import MediaRepository
@@ -89,6 +91,13 @@ class MediaSyncService:
                     entity = self._mapper.to_entity(photo_data)
                     media_item = self._repository.upsert(session, entity)
                     session.flush()
+
+                    # Keep media_conversion.media_id aligned if conversion history exists
+                    conv = session.scalar(
+                        select(MediaConversion).where(MediaConversion.media_uid == media_item.uid)
+                    )
+                    if conv and conv.media_id != media_item.id:
+                        conv.media_id = media_item.id
 
                     if sync_files and uid:
                         detail = photo_details.get(uid, photo_data)

@@ -169,12 +169,12 @@ class MediaRepository(BaseRepository[MediaItem]):
         """Find video items sorted by size descending, excluding those already successfully optimized."""
         from photoprismhelper.entity.media_conversion import MediaConversion
 
-        completed_subq = select(MediaConversion.media_id).where(MediaConversion.status == "completed")
+        completed_subq = select(MediaConversion.media_uid).where(MediaConversion.status == "completed")
         stmt = (
             select(MediaItem)
             .where(
                 MediaItem.media_type == "video",
-                MediaItem.id.not_in(completed_subq),
+                MediaItem.uid.not_in(completed_subq),
             )
         )
         if min_size_bytes > 0:
