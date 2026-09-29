@@ -5,6 +5,7 @@ import re
 from datetime import datetime
 from typing import Any
 
+from photoprismhelper.entity.media_file import MediaFile
 from photoprismhelper.entity.media_item import MediaItem
 
 
@@ -177,3 +178,63 @@ class MediaMapper:
             is_favorite=is_favorite,
             tags=keywords if keywords else None,
         )
+
+    @classmethod
+    def to_file_entities(
+        cls, photo_data: dict[str, Any], media_item: MediaItem
+    ) -> list[MediaFile]:
+        """Map all files in photo details to MediaFile entities."""
+        files_data = photo_data.get("Files") or []
+        entities: list[MediaFile] = []
+
+        for f in files_data:
+            file_uid = f.get("UID")
+            if not file_uid:
+                continue
+
+            name = f.get("Name") or ""
+            root = f.get("Root") or "/"
+            size = int(f.get("Size") or 0)
+            media_type = (f.get("MediaType") or "").lower()
+            codec = f.get("Codec")
+            width = int(f.get("Width")) if f.get("Width") else None
+            height = int(f.get("Height")) if f.get("Height") else None
+            duration = float(f.get("Duration")) if f.get("Duration") else None
+            if duration and duration > 100_000:
+                duration = duration / 1e9
+            fps = float(f.get("FPS")) if f.get("FPS") else None
+            mime_type = f.get("Mime")
+            is_primary = bool(f.get("Primary", False))
+            is_missing = bool(f.get("Missing", False))
+            is_sidecar = bool(root == "sidecar" or f.get("Sidecar", False))
+            is_video = bool(
+                f.get("Video")
+                or media_type == "video"
+                or any(name.lower().endswith(ext) for ext in cls.VIDEO_EXTENSIONS)
+            )
+
+            media_file = MediaFile(
+                media_id=media_item.id,
+                media_uid=media_item.uid,
+                file_uid=file_uid,
+                file_name=os.path.basename(name),
+                file_path=name,
+                file_root=root,
+                file_size=size,
+                file_hash=f.get("Hash"),
+                media_type=media_type if media_type else ("video" if is_video else "image"),
+                codec=codec,
+                width=width,
+                height=height,
+                duration=duration,
+                fps=fps,
+                mime_type=mime_type,
+                is_primary=is_primary,
+                is_missing=is_missing,
+                is_video=is_video,
+                is_sidecar=is_sidecar,
+            )
+            entities.append(media_file)
+
+        return entities
+

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 from sqlalchemy import BigInteger, Boolean, DateTime, Float, Integer, String, Text, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from photoprismhelper.entity.base import Base
+
+if TYPE_CHECKING:
+    from photoprismhelper.entity.media_file import MediaFile
 
 
 class MediaItem(Base):
@@ -32,6 +36,10 @@ class MediaItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    files: Mapped[list["MediaFile"]] = relationship(
+        "MediaFile", back_populates="media", cascade="all, delete-orphan", lazy="selectin"
     )
 
     def __repr__(self) -> str:

@@ -11,8 +11,10 @@ from injector import inject
 
 from photoprismhelper.client.photoprism_client import PhotoprismClient
 from photoprismhelper.entity.media_conversion import MediaConversion
+from photoprismhelper.entity.media_file import MediaFile
 from photoprismhelper.entity.media_item import MediaItem
 from photoprismhelper.repository.media_conversion_repository import MediaConversionRepository
+from photoprismhelper.repository.media_file_repository import MediaFileRepository
 from photoprismhelper.repository.media_repository import MediaRepository
 from photoprismhelper.service.metadata_extractor import MetadataExtractor
 from photoprismhelper.service.storage_analysis_service import StorageAnalysisService
@@ -54,6 +56,7 @@ class VideoOptimizerService:
         converter: VideoConverter | None = None,
         extractor: MetadataExtractor | None = None,
         originals_path: str | None = None,
+        file_repository: MediaFileRepository | None = None,
     ) -> None:
         self._media_repository = media_repository
         self._conversion_repository = conversion_repository
@@ -62,6 +65,7 @@ class VideoOptimizerService:
         self._converter = converter or VideoConverter()
         self._extractor = extractor or MetadataExtractor()
         self._originals_path = originals_path or os.getenv("PHOTOPRISM_ORIGINALS_PATH", "/photoprism/originals")
+        self._file_repository = file_repository
 
     def get_candidate_videos(
         self,
@@ -310,3 +314,61 @@ class VideoOptimizerService:
             return True, f"Successfully restored original file for media {conv.media_uid}."
         finally:
             session.close()
+
+    def get_stack_video_files(self, media_uid: str) -> list[MediaFile]:
+        """Fetch all non-sidecar, non-missing video files in the stack for this media."""
+        if not self._file_repository:
+            return []
+        session = self._file_repository.get_session()
+        try:
+            files = self._file_repository.get_stack_files_for_media(session, media_uid, include_sidecars=False)
+            return [f for f in files if f.is_video and not f.is_missing]
+        finally:
+            session.close()
+
+    def get_stack_duplicates(self, media_uid: str, primary_file_name: str | None = None) -> list[MediaFile]:
+        """Find video duplicates in the stack (e.g. .00001, .00002 or secondary videos)."""
+        import re
+
+        video_files = self.get_stack_video_files(media_uid)
+        if len(video_files) <= 1:
+            return []
+
+        duplicates: list[MediaFile] = []
+        for vf in video_files:
+            name = vf.file_name.lower()
+            if re.search(r"\.\d{5}\.", name):
+                duplicates.append(vf)
+            elif primary_file_name and vf.file_name != primary_file_name and not vf.is_primary:
+                duplicates.append(vf)
+        return duplicates
+
+    def remove_duplicate_file(
+        self, file_item: MediaFile, keep_backup: bool = False, notify_photoprism: bool = True
+    ) -> tuple[bool, str]:
+        """Remove a duplicate stack file from disk and database."""
+        disk_path = self.resolve_disk_path(file_item.file_path)
+        if os.path.exists(disk_path):
+            if keep_backup:
+                backup_path = f"{disk_path}.bak"
+                shutil.move(disk_path, backup_path)
+            else:
+                os.remove(disk_path)
+
+        if self._file_repository:
+            session = self._file_repository.get_session()
+            try:
+                self._file_repository.delete_by_file_uid(session, file_item.file_uid)
+                session.commit()
+            finally:
+                session.close()
+
+        if notify_photoprism and self._photoprism_client:
+            subfolder = self.get_relative_subfolder(disk_path)
+            try:
+                self._photoprism_client.trigger_index(path=subfolder, cleanup=True)
+            except Exception as e:
+                logger.warning("Could not trigger PhotoPrism cleanup: %s", e)
+
+        return True, f"Removed duplicate {file_item.file_name} ({disk_path})"
+

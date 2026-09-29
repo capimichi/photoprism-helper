@@ -133,6 +133,29 @@ class PhotoprismClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_photos_detail_batch(
+        self, uids: list[str], max_workers: int = 10
+    ) -> dict[str, dict[str, Any]]:
+        """Fetch detailed information for multiple photos concurrently."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        if not self._session_token:
+            self.authenticate()
+
+        results: dict[str, dict[str, Any]] = {}
+        if not uids:
+            return results
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_uid = {executor.submit(self.get_photo, uid): uid for uid in uids}
+            for future in as_completed(future_to_uid):
+                uid = future_to_uid[future]
+                try:
+                    results[uid] = future.result()
+                except Exception as e:
+                    logger.warning("Failed to fetch photo detail for %s: %s", uid, e)
+        return results
+
     def update_photo_details(self, uid: str, details: dict[str, Any]) -> dict[str, Any]:
         """Update photo details such as keywords/tags, title, description."""
         if not self._session_token:

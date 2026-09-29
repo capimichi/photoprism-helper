@@ -148,6 +148,30 @@ class VideoOptimizeCommand(AbstractCommand):
                 if notify:
                     click.echo("    - PhotoPrism re-index triggered.")
 
+                # Check for stack duplicates (e.g. .00001.mov)
+                duplicates = self._optimizer_service.get_stack_duplicates(item.uid, primary_file_name=item.file_name)
+                if duplicates:
+                    click.secho(f"\n  ⚠ Found {len(duplicates)} duplicate/stacked video(s) in this media item:", fg="yellow")
+                    for d in duplicates:
+                        d_size = self._storage_analysis_service.format_bytes(d.file_size)
+                        click.echo(f"    • {d.file_name} ({d_size})")
+
+                    clean_dups = False
+                    if interactive:
+                        clean_dups = click.confirm("    Remove stack duplicate(s) to free up extra NAS space?", default=True)
+                    else:
+                        clean_dups = True
+
+                    if clean_dups:
+                        for d in duplicates:
+                            ok, msg = self._optimizer_service.remove_duplicate_file(
+                                d, keep_backup=keep_backup, notify_photoprism=notify
+                            )
+                            if ok:
+                                click.secho(f"    ✓ {msg}", fg="green")
+                            else:
+                                click.secho(f"    ✗ Failed to remove {d.file_name}: {msg}", fg="red")
+
     def _show_history(self) -> None:
         session = self._optimizer_service._media_repository.get_session()
         try:

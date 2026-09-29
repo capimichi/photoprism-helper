@@ -18,6 +18,7 @@ from photoprismhelper.config.app_config import AppConfig
 from photoprismhelper.manager.db_manager import DbManager
 from photoprismhelper.mapper.media_mapper import MediaMapper
 from photoprismhelper.repository.media_conversion_repository import MediaConversionRepository
+from photoprismhelper.repository.media_file_repository import MediaFileRepository
 from photoprismhelper.repository.media_repository import MediaRepository
 from photoprismhelper.service.media_sync_service import MediaSyncService
 from photoprismhelper.service.storage_analysis_service import StorageAnalysisService
@@ -116,13 +117,16 @@ class DefaultContainer:
         media_repository = MediaRepository(db_manager)
         self.injector.binder.bind(MediaRepository, to=media_repository)
 
+        media_file_repository = MediaFileRepository(db_manager)
+        self.injector.binder.bind(MediaFileRepository, to=media_file_repository)
+
         media_conversion_repository = MediaConversionRepository(db_manager)
         self.injector.binder.bind(MediaConversionRepository, to=media_conversion_repository)
 
         storage_analysis_service = StorageAnalysisService(media_repository)
         self.injector.binder.bind(StorageAnalysisService, to=storage_analysis_service)
 
-        media_sync_service = MediaSyncService(photoprism_client, media_repository, media_mapper)
+        media_sync_service = MediaSyncService(photoprism_client, media_repository, media_file_repository, media_mapper)
         self.injector.binder.bind(MediaSyncService, to=media_sync_service)
 
         tag_service = TagService(photoprism_client, media_repository)
@@ -134,6 +138,7 @@ class DefaultContainer:
             storage_analysis_service,
             photoprism_client=photoprism_client,
             originals_path=self.photoprism_originals_path,
+            file_repository=media_file_repository,
         )
         self.injector.binder.bind(VideoOptimizerService, to=video_optimizer_service)
 

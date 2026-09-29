@@ -30,9 +30,16 @@ class MediaSyncCommand(AbstractCommand):
         fn = click.option("--batch-size", default=100, help="Number of items to fetch per batch.")(fn)
         fn = click.option("--max-items", default=None, type=int, help="Maximum number of items to sync (default: all).")(fn)
         fn = click.option("--query", "-q", default="", help="PhotoPrism search filter (e.g. 'type:video', 'type:image').")(fn)
+        fn = click.option("--sync-files/--no-sync-files", default=True, help="Synchronize complete stack files for each media item (default: True).")(fn)
         return fn
 
-    def run(self, batch_size: int = 100, max_items: int | None = None, query: str = "") -> None:
+    def run(
+        self,
+        batch_size: int = 100,
+        max_items: int | None = None,
+        query: str = "",
+        sync_files: bool = True,
+    ) -> None:
         """Fetch media from PhotoPrism and sync into MariaDB."""
         # Ensure tables exist
         self._db_manager.create_tables()
@@ -67,6 +74,7 @@ class MediaSyncCommand(AbstractCommand):
                 max_items=max_items,
                 query=query,
                 progress_callback=on_batch,
+                sync_files=sync_files,
             )
 
         size_formatted = self._storage_analysis_service.format_bytes(result.total_size_bytes)
@@ -75,4 +83,6 @@ class MediaSyncCommand(AbstractCommand):
         click.echo(f"  • Images: {result.images_count:,}")
         click.echo(f"  • Videos: {result.videos_count:,}")
         click.echo(f"  • Other files: {result.other_count:,}")
+        click.echo(f"  • Total stack files indexed: {result.files_count:,}")
+        click.echo(f"  • Stacked items detected: {result.stacked_items_count:,}")
         click.echo(f"  • Total indexed storage: {size_formatted}")
