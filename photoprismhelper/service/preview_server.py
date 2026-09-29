@@ -271,6 +271,9 @@ class RangeRequestHandler(BaseHTTPRequestHandler):
         # Suppress standard noisy access logs
         return
 
+    def do_HEAD(self) -> None:
+        self.do_GET()
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
