@@ -460,19 +460,15 @@ class VideoPreviewServer:
         if env_host:
             return env_host
 
-        # Derive from PHOTOPRISM_BASE_URL if available
-        pp_url = os.getenv("PHOTOPRISM_BASE_URL", "")
-        if pp_url:
-            parsed = urlparse(pp_url)
-            if parsed.hostname and parsed.hostname not in ("localhost", "127.0.0.1"):
-                return parsed.hostname
-
         # Try to resolve outbound IP
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
+            s.connect(("192.168.1.1", 80))
             ip = s.getsockname()[0]
             s.close()
+            # If inside docker network (e.g. 172.18.x.x), host IP is 192.168.1.100
+            if ip.startswith("172.") or ip.startswith("10.") or ip.startswith("127."):
+                return "192.168.1.100"
             return ip
         except Exception:
-            return "localhost"
+            return "192.168.1.100"
