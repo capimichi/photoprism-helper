@@ -101,19 +101,25 @@ class VideoDuplicatesCommand(AbstractCommand):
             # Preview server support
             if preview and self._preview_server and duplicates:
                 first_uid, first_dup, first_primary, first_prim_path = duplicates[0]
-                prim_disk = self._optimizer_service.resolve_disk_path(first_prim_path)
+
+                # Find the active primary video file in this stack to compare against
+                stack_videos = self._optimizer_service.get_stack_video_files(first_uid)
+                prim_file = next((f for f in stack_videos if f.file_uid != first_dup.file_uid), None)
+
+                prim_disk = self._optimizer_service.resolve_disk_path(prim_file.file_path) if prim_file else self._optimizer_service.resolve_disk_path(first_prim_path)
                 dup_disk = self._optimizer_service.resolve_disk_path(first_dup.file_path)
 
                 if os.path.isfile(prim_disk) and os.path.isfile(dup_disk):
                     prim_size = self._storage_analysis_service.format_bytes(os.path.getsize(prim_disk))
                     dup_size = self._storage_analysis_service.format_bytes(first_dup.file_size)
+                    prim_name = prim_file.file_name if prim_file else first_primary
 
                     preview_url = self._preview_server.start(
                         file1_path=prim_disk,
                         file2_path=dup_disk,
-                        title=f"{first_primary} vs {first_dup.file_name}",
+                        title=f"{prim_name} vs {first_dup.file_name}",
                         subtitle=f"UID: {first_uid} | Duplicato da eliminare: {dup_size}",
-                        label1=f"Primario ({first_primary})",
+                        label1=f"Primario ({prim_name})",
                         label2=f"Duplicato ({first_dup.file_name})",
                         info1=f"Dimensione: {prim_size}",
                         info2=f"Dimensione: {dup_size}",
