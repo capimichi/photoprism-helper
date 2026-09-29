@@ -17,9 +17,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video Preview & Confronto: {title}</title>
+    <title>Video Preview & Confronto: __TITLE__</title>
     <style>
-        :root {{
+        :root {
             --bg: #121214;
             --card-bg: #1e1e24;
             --text: #f0f0f5;
@@ -28,9 +28,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             --accent-green: #10b981;
             --accent-yellow: #f59e0b;
             --border: #2e2e38;
-        }}
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
             background: var(--bg);
             color: var(--text);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -38,12 +38,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             display: flex;
             flex-direction: column;
             align-items: center;
-        }}
-        .container {{
+        }
+        .container {
             max-width: 1400px;
             width: 100%;
-        }}
-        header {{
+        }
+        header {
             background: var(--card-bg);
             border: 1px solid var(--border);
             border-radius: 12px;
@@ -54,28 +54,28 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             align-items: center;
             flex-wrap: wrap;
             gap: 16px;
-        }}
-        h1 {{
+        }
+        h1 {
             font-size: 1.3rem;
             font-weight: 600;
-        }}
-        .badges {{
+        }
+        .badges {
             display: flex;
             gap: 10px;
             flex-wrap: wrap;
-        }}
-        .badge {{
+        }
+        .badge {
             background: #2a2a36;
             padding: 6px 12px;
             border-radius: 20px;
             font-size: 0.85rem;
             font-weight: 500;
-        }}
-        .badge.green {{ color: var(--accent-green); background: rgba(16, 185, 129, 0.15); }}
-        .badge.blue {{ color: var(--accent); background: rgba(59, 130, 246, 0.15); }}
-        .badge.yellow {{ color: var(--accent-yellow); background: rgba(245, 158, 11, 0.15); }}
+        }
+        .badge.green { color: var(--accent-green); background: rgba(16, 185, 129, 0.15); }
+        .badge.blue { color: var(--accent); background: rgba(59, 130, 246, 0.15); }
+        .badge.yellow { color: var(--accent-yellow); background: rgba(245, 158, 11, 0.15); }
         
-        .controls-bar {{
+        .controls-bar {
             background: var(--card-bg);
             border: 1px solid var(--border);
             border-radius: 8px;
@@ -86,52 +86,52 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             justify-content: space-between;
             gap: 16px;
             font-size: 0.9rem;
-        }}
-        .sync-toggle {{
+        }
+        .sync-toggle {
             display: flex;
             align-items: center;
             gap: 8px;
             cursor: pointer;
-        }}
-        .sync-toggle input {{
+        }
+        .sync-toggle input {
             width: 18px;
             height: 18px;
             cursor: pointer;
-        }}
+        }
         
-        .players-grid {{
+        .players-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 20px;
-        }}
-        @media (max-width: 900px) {{
-            .players-grid {{ grid-template-columns: 1fr; }}
-        }}
+        }
+        @media (max-width: 900px) {
+            .players-grid { grid-template-columns: 1fr; }
+        }
         
-        .player-card {{
+        .player-card {
             background: var(--card-bg);
             border: 1px solid var(--border);
             border-radius: 12px;
             overflow: hidden;
             display: flex;
             flex-direction: column;
-        }}
-        .player-header {{
+        }
+        .player-header {
             padding: 14px 18px;
             border-bottom: 1px solid var(--border);
             display: flex;
             justify-content: space-between;
             align-items: center;
-        }}
-        .player-title {{
+        }
+        .player-title {
             font-weight: 600;
             font-size: 1.05rem;
-        }}
-        .player-meta {{
+        }
+        .player-meta {
             font-size: 0.85rem;
             color: var(--text-dim);
-        }}
-        .video-wrapper {{
+        }
+        .video-wrapper {
             background: #000;
             position: relative;
             width: 100%;
@@ -139,19 +139,19 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             display: flex;
             align-items: center;
             justify-content: center;
-        }}
-        video {{
+        }
+        video {
             width: 100%;
             height: 100%;
             object-fit: contain;
-        }}
-        .footer-note {{
+        }
+        .footer-note {
             margin-top: 24px;
             text-align: center;
             color: var(--text-dim);
             font-size: 0.9rem;
-        }}
-        .btn {{
+        }
+        .btn {
             display: inline-block;
             padding: 8px 16px;
             border-radius: 6px;
@@ -162,21 +162,21 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             color: var(--text);
             border: 1px solid var(--border);
             transition: background 0.2s;
-        }}
-        .btn:hover {{ background: #383848; }}
+        }
+        .btn:hover { background: #383848; }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
             <div>
-                <h1>Confronto Video: {title}</h1>
-                <p style="color: var(--text-dim); font-size: 0.85rem; margin-top: 4px;">{subtitle}</p>
+                <h1>Confronto Video: __TITLE__</h1>
+                <p style="color: var(--text-dim); font-size: 0.85rem; margin-top: 4px;">__SUBTITLE__</p>
             </div>
             <div class="badges">
-                <span class="badge blue">{badge1}</span>
-                <span class="badge green">{badge2}</span>
-                {badge3_html}
+                <span class="badge blue">__BADGE1__</span>
+                <span class="badge green">__BADGE2__</span>
+                __BADGE3_HTML__
             </div>
         </header>
 
@@ -186,20 +186,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 <span>Sincronizza Riproduzione e Posizione temporale (Scrub)</span>
             </label>
             <div>
-                <a href="/stream/file1?download=1" class="btn" download>Scarica {label1}</a>
-                <a href="/stream/file2?download=1" class="btn" download>Scarica {label2}</a>
+                <a href="/stream/file1?download=1" class="btn" download>Scarica __LABEL1__</a>
+                <a href="/stream/file2?download=1" class="btn" download>Scarica __LABEL2__</a>
             </div>
         </div>
 
         <div class="players-grid">
             <div class="player-card">
                 <div class="player-header">
-                    <span class="player-title">{label1}</span>
-                    <span class="player-meta">{info1}</span>
+                    <span class="player-title">__LABEL1__</span>
+                    <span class="player-meta">__INFO1__</span>
                 </div>
                 <div class="video-wrapper">
                     <video id="video1" controls preload="metadata" playsinline>
-                        <source src="/stream/file1" type="{mime1}">
+                        <source src="/stream/file1" type="__MIME1__">
                         Il tuo browser non supporta il tag video HTML5.
                     </video>
                 </div>
@@ -207,12 +207,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
             <div class="player-card">
                 <div class="player-header">
-                    <span class="player-title">{label2}</span>
-                    <span class="player-meta">{info2}</span>
+                    <span class="player-title">__LABEL2__</span>
+                    <span class="player-meta">__INFO2__</span>
                 </div>
                 <div class="video-wrapper">
                     <video id="video2" controls preload="metadata" playsinline>
-                        <source src="/stream/file2" type="{mime2}">
+                        <source src="/stream/file2" type="__MIME2__">
                         Il tuo browser non supporta il tag video HTML5.
                     </video>
                 </div>
@@ -296,18 +296,19 @@ class RangeRequestHandler(BaseHTTPRequestHandler):
         ctx = self.server_context
         badge3_html = f'<span class="badge yellow">{ctx.get("badge3")}</span>' if ctx.get("badge3") else ""
 
-        html = HTML_TEMPLATE.format(
-            title=ctx.get("title", "Video Comparison"),
-            subtitle=ctx.get("subtitle", ""),
-            badge1=ctx.get("badge1", ""),
-            badge2=ctx.get("badge2", ""),
-            badge3_html=badge3_html,
-            label1=ctx.get("label1", "File 1"),
-            label2=ctx.get("label2", "File 2"),
-            info1=ctx.get("info1", ""),
-            info2=ctx.get("info2", ""),
-            mime1=ctx.get("mime1", "video/mp4"),
-            mime2=ctx.get("mime2", "video/mp4"),
+        html = (
+            HTML_TEMPLATE
+            .replace("__TITLE__", ctx.get("title", "Video Comparison"))
+            .replace("__SUBTITLE__", ctx.get("subtitle", ""))
+            .replace("__BADGE1__", ctx.get("badge1", ""))
+            .replace("__BADGE2__", ctx.get("badge2", ""))
+            .replace("__BADGE3_HTML__", badge3_html)
+            .replace("__LABEL1__", ctx.get("label1", "File 1"))
+            .replace("__LABEL2__", ctx.get("label2", "File 2"))
+            .replace("__INFO1__", ctx.get("info1", ""))
+            .replace("__INFO2__", ctx.get("info2", ""))
+            .replace("__MIME1__", ctx.get("mime1", "video/mp4"))
+            .replace("__MIME2__", ctx.get("mime2", "video/mp4"))
         )
         data = html.encode("utf-8")
         self.send_response(200)
