@@ -6,6 +6,7 @@ from injector import inject
 from tabulate import tabulate
 
 from photoprismhelper.command.abstract_command import AbstractCommand
+from photoprismhelper.service.preview_server import VideoPreviewServer
 from photoprismhelper.service.storage_analysis_service import StorageAnalysisService
 from photoprismhelper.service.video_optimizer_service import VideoOptimizerService
 
@@ -18,9 +19,11 @@ class VideoOptimizeCommand(AbstractCommand):
         self,
         optimizer_service: VideoOptimizerService,
         storage_analysis_service: StorageAnalysisService,
+        preview_server: VideoPreviewServer | None = None,
     ) -> None:
         self._optimizer_service = optimizer_service
         self._storage_analysis_service = storage_analysis_service
+        self._preview_server = preview_server
 
     def register_options(self, fn):
         fn = click.option("--limit", "-l", default=1, type=int, help="Number of videos to optimize (default: 1).")(fn)
@@ -29,6 +32,7 @@ class VideoOptimizeCommand(AbstractCommand):
         fn = click.option("--interactive/--no-interactive", "-i/-y", default=True, help="Prompt before converting and replacing.")(fn)
         fn = click.option("--keep-backup/--no-backup", default=True, help="Keep .bak of original file (default: True).")(fn)
         fn = click.option("--notify/--no-notify", default=True, help="Notify PhotoPrism to re-index the folder (default: True).")(fn)
+        fn = click.option("--preview/--no-preview", default=False, help="Launch ephemeral web page to compare videos side-by-side.")(fn)
         fn = click.option("--revert", "revert_id", default=None, type=int, help="Revert a conversion by its ID.")(fn)
         fn = click.option("--history", is_flag=True, default=False, help="Show conversion history.")(fn)
         return fn
@@ -41,6 +45,7 @@ class VideoOptimizeCommand(AbstractCommand):
         interactive: bool = True,
         keep_backup: bool = True,
         notify: bool = True,
+        preview: bool = False,
         revert_id: int | None = None,
         history: bool = False,
     ) -> None:
@@ -127,20 +132,39 @@ class VideoOptimizeCommand(AbstractCommand):
                     fg="green",
                 )
                 click.echo(f"    - Original size: {size_fmt}")
-                click.echo(f"    - Optimized size: {opt_fmt} (-{pct:.1f}%, saved {saved_fmt})")
-                click.echo(f"    - Integrity check: PASSED ({draft.integrity_message})")
+                if preview and self._preview_server:
+                    preview_url = self._preview_server.start(
+                        file1_path=disk_path,
+                        file2_path=draft.temp_output_path,
+                        title=item.file_name,
+                        subtitle=f"UID: {item.uid} | Risparmio stimato: {saved_fmt} (-{pct:.1f}%)",
+                        label1=f"Originale ({item.extension.upper()})",
+                        label2="Ottimizzato (1080p HEVC)",
+                        info1=f"Dimensione: {size_fmt}",
+                        info2=f"Dimensione: {opt_fmt} (-{pct:.1f}%)",
+                        badge1=f"Originale: {size_fmt}",
+                        badge2=f"Ottimizzato: {opt_fmt}",
+                        badge3=f"Risparmiati: {saved_fmt}",
+                    )
+                    click.secho("\n  📺 Anteprima Web attiva per il confronto:", fg="cyan", bold=True)
+                    click.secho(f"     👉 {preview_url}", fg="cyan", underline=True)
+                    click.echo("     (I video sono sincronizzati nello scrub. Aprilo nel browser per visualizzarli)\n")
 
-                if interactive:
-                    confirm_apply = click.confirm(f"  Apply replacement on NAS for {item.file_name}?", default=True)
-                    if not confirm_apply:
-                        click.echo("  Cancelled. Local temp discarded, NAS untouched.")
-                        continue
+                try:
+                    if interactive:
+                        confirm_apply = click.confirm(f"  Apply replacement on NAS for {item.file_name}?", default=True)
+                        if not confirm_apply:
+                            click.echo("  Cancelled. Local temp discarded, NAS untouched.")
+                            continue
 
-                conv = self._optimizer_service.apply_optimization(
-                    draft,
-                    keep_backup=keep_backup,
-                    notify_photoprism=notify,
-                )
+                    conv = self._optimizer_service.apply_optimization(
+                        draft,
+                        keep_backup=keep_backup,
+                        notify_photoprism=notify,
+                    )
+                finally:
+                    if preview and self._preview_server:
+                        self._preview_server.stop()
 
                 click.secho(f"  ✓ Conversion #{conv.id} applied to NAS!", fg="green")
                 if keep_backup:

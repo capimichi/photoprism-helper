@@ -22,6 +22,7 @@ from photoprismhelper.repository.media_conversion_repository import MediaConvers
 from photoprismhelper.repository.media_file_repository import MediaFileRepository
 from photoprismhelper.repository.media_repository import MediaRepository
 from photoprismhelper.service.media_sync_service import MediaSyncService
+from photoprismhelper.service.preview_server import VideoPreviewServer
 from photoprismhelper.service.storage_analysis_service import StorageAnalysisService
 from photoprismhelper.service.tag_service import TagService
 from photoprismhelper.service.video_optimizer_service import VideoOptimizerService
@@ -143,6 +144,9 @@ class DefaultContainer:
         )
         self.injector.binder.bind(VideoOptimizerService, to=video_optimizer_service)
 
+        preview_server = VideoPreviewServer(port=8765)
+        self.injector.binder.bind(VideoPreviewServer, to=preview_server)
+
         # Commands
         self.injector.binder.bind(DbInitCommand, to=DbInitCommand(db_manager, app_config))
         self.injector.binder.bind(
@@ -153,7 +157,7 @@ class DefaultContainer:
         self.injector.binder.bind(TagCommand, to=TagCommand(tag_service))
         self.injector.binder.bind(
             VideoOptimizeCommand,
-            to=VideoOptimizeCommand(video_optimizer_service, storage_analysis_service),
+            to=VideoOptimizeCommand(video_optimizer_service, storage_analysis_service, preview_server),
         )
         self.injector.binder.bind(
             VideoDuplicatesCommand,
@@ -162,5 +166,7 @@ class DefaultContainer:
                 media_repository,
                 video_optimizer_service,
                 storage_analysis_service,
+                preview_server,
+                photoprism_client,
             ),
         )

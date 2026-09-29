@@ -21,6 +21,8 @@ services:
       PHOTOPRISM_VERIFY_SSL: ${PHOTOPRISM_VERIFY_SSL:-true}
       PHOTOPRISM_TIMEOUT_SECONDS: ${PHOTOPRISM_TIMEOUT_SECONDS:-60}
       PHOTOPRISM_ORIGINALS_PATH: /photoprism/originals
+    ports:
+      - "8765:8765"
     depends_on:
       mariadb:
         condition: service_healthy
