@@ -131,7 +131,8 @@ class VideoOptimizeCommand(AbstractCommand):
                     f"  ✓ Transcoding finished in {draft.duration_seconds:.1f}s (encoder: {draft.encoder_used})",
                     fg="green",
                 )
-                click.echo(f"    - Original size: {size_fmt}")
+                click.echo(f"    - Original size:  {size_fmt}")
+                click.secho(f"    - Optimized size: {opt_fmt} (-{pct:.1f}% | risparmiati: {saved_fmt})", fg="cyan", bold=True)
                 if preview and self._preview_server:
                     preview_url = self._preview_server.start(
                         file1_path=disk_path,
@@ -166,7 +167,8 @@ class VideoOptimizeCommand(AbstractCommand):
                     if preview and self._preview_server:
                         self._preview_server.stop()
 
-                click.secho(f"  ✓ Conversion #{conv.id} applied to NAS!", fg="green")
+                click.secho(f"  ✓ Conversion #{conv.id} applied to NAS!", fg="green", bold=True)
+                click.echo(f"    - New file size: {opt_fmt} (saved {saved_fmt})")
                 if keep_backup:
                     click.echo(f"    - Backup saved at: {conv.backup_file_path}")
                 if notify:
