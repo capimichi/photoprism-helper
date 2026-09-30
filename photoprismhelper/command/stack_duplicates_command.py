@@ -36,6 +36,7 @@ class VideoDuplicatesCommand(AbstractCommand):
         self._photoprism_client = photoprism_client
 
     def register_options(self, fn):
+        fn = click.option("--limit", "-l", default=None, type=int, help="Limit number of duplicates to inspect or clean (e.g. 1).")(fn)
         fn = click.option("--clean", is_flag=True, default=False, help="Delete detected duplicate files from disk and PhotoPrism.")(fn)
         fn = click.option("--preview", is_flag=True, default=False, help="Launch ephemeral web page to compare primary vs duplicate videos side-by-side.")(fn)
         fn = click.option("--yes", "-y", is_flag=True, default=False, help="Skip confirmation prompt before cleaning.")(fn)
@@ -44,6 +45,7 @@ class VideoDuplicatesCommand(AbstractCommand):
 
     def run(
         self,
+        limit: int | None = None,
         clean: bool = False,
         preview: bool = False,
         yes: bool = False,
@@ -74,6 +76,10 @@ class VideoDuplicatesCommand(AbstractCommand):
                 click.echo("✓ All stacked videos are clean: no duplicate video files detected.")
                 return
 
+            if limit and limit > 0:
+                duplicates = duplicates[:limit]
+                total_wasted_bytes = sum(d.file_size for _, d, _, _ in duplicates)
+
             rows = []
             pp_base = self._photoprism_client.base_url if self._photoprism_client else ""
             for uid, d, primary_name, _ in duplicates:
@@ -88,7 +94,8 @@ class VideoDuplicatesCommand(AbstractCommand):
                 ])
 
             wasted_fmt = self._storage_analysis_service.format_bytes(total_wasted_bytes)
-            click.echo(f"\n### Detected Video Stack Duplicates ({len(duplicates)} files, {wasted_fmt} wasted)")
+            limit_str = f" (limited to {limit})" if limit else ""
+            click.echo(f"\n### Detected Video Stack Duplicates{limit_str} ({len(duplicates)} files, {wasted_fmt} wasted)")
             click.echo(tabulate(rows, headers=["Media UID", "Duplicate File", "Size", "Primary File", "Relative Path"], tablefmt="github"))
             click.echo()
 
