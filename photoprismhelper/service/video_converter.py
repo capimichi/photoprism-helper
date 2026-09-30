@@ -111,7 +111,7 @@ class VideoConverter:
                     global_args=[],
                     input_args=["-hwaccel", "vaapi", "-hwaccel_device", vaapi_dev, "-hwaccel_output_format", "vaapi"],
                     scale_filter_template="scale_vaapi=w=-2:h={height}",
-                    output_args=["-c:v", "hevc_vaapi", "-qp", "24"],
+                    output_args=["-c:v", "hevc_vaapi", "-rc_mode", "VBR", "-b:v", "5000k", "-maxrate", "8000k"],
                 )
             )
 
@@ -133,7 +133,7 @@ class VideoConverter:
                 is_hardware=True,
                 description="NVIDIA NVENC Hardware Acceleration",
                 scale_filter_template="scale=-2:{height}",
-                output_args=["-c:v", "hevc_nvenc", "-cq", "24", "-preset", "p5", "-pix_fmt", "p010le"],
+                output_args=["-c:v", "hevc_nvenc", "-cq", "24", "-b:v", "5000k", "-maxrate", "8000k", "-preset", "p5", "-pix_fmt", "p010le"],
             )
         )
 
@@ -357,6 +357,27 @@ class VideoConverter:
             )
 
         opt_size = os.path.getsize(output_path)
+        if opt_size >= orig_size:
+            logger.warning(
+                "Optimization aborted: converted file (%d bytes) is not smaller than original (%d bytes).",
+                opt_size,
+                orig_size,
+            )
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            return ConversionResult(
+                success=False,
+                output_path=output_path,
+                original_size=orig_size,
+                optimized_size=opt_size,
+                duration_seconds=elapsed,
+                encoder_used=encoder_cfg.name,
+                error_message=(
+                    f"Optimized file is not smaller than original "
+                    f"({self._format_bytes(opt_size)} >= {self._format_bytes(orig_size)}). Optimization aborted."
+                ),
+            )
+
         logger.info(
             "Conversion successful! Original: %d bytes, Optimized: %d bytes (elapsed: %.1fs, encoder: %s)",
             orig_size,
@@ -373,3 +394,13 @@ class VideoConverter:
             encoder_used=encoder_cfg.name,
             integrity_message=msg,
         )
+
+    @staticmethod
+    def _format_bytes(size: int | float) -> str:
+        s = float(size)
+        for unit in ["B", "KB", "MB", "GB", "TB"]:
+            if abs(s) < 1024.0:
+                return f"{s:.2f} {unit}"
+            s /= 1024.0
+        return f"{s:.2f} PB"
+
