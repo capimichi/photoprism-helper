@@ -198,8 +198,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     <span class="player-meta">__INFO1__</span>
                 </div>
                 <div class="video-wrapper">
-                    <video id="video1" controls preload="metadata" playsinline>
+                    <video id="video1" controls preload="auto" playsinline>
                         <source src="/stream/file1" type="__MIME1__">
+                        <source src="/stream/file1">
                         Il tuo browser non supporta il tag video HTML5.
                     </video>
                 </div>
@@ -211,8 +212,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                     <span class="player-meta">__INFO2__</span>
                 </div>
                 <div class="video-wrapper">
-                    <video id="video2" controls preload="metadata" playsinline>
+                    <video id="video2" controls preload="auto" playsinline>
                         <source src="/stream/file2" type="__MIME2__">
+                        <source src="/stream/file2">
                         Il tuo browser non supporta il tag video HTML5.
                     </video>
                 </div>
@@ -220,7 +222,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
 
         <div class="footer-note">
-            <p>💡 <strong>Istruzioni:</strong> Controlla la qualità del video, la fluidità e i colori. Quando hai finito, torna nel <strong>terminale</strong> per confermare o annullare l'operazione.</p>
+            <p>💡 <strong>Istruzioni:</strong> Controlla la qualità del video, la fluidità e i colori. Se il browser non riesce a decodificare direttamente il codec originale (es. QuickTime HEVC senza estensioni), puoi scaricare il file con i pulsanti in alto o visualizzarlo su PhotoPrism. Quando hai finito, torna nel <strong>terminale</strong> per confermare o annullare l'operazione.</p>
         </div>
     </div>
 
@@ -327,11 +329,9 @@ class RangeRequestHandler(BaseHTTPRequestHandler):
 
         total_size = os.path.getsize(file_path)
         mime_type, _ = mimetypes.guess_type(file_path)
-        if not mime_type or not mime_type.startswith("video"):
-            if file_path.lower().endswith(".mov"):
-                mime_type = "video/quicktime"
-            else:
-                mime_type = "video/mp4"
+        # Browsers play H.264/AAC MOV files best when Content-Type is video/mp4
+        if not mime_type or not mime_type.startswith("video") or mime_type == "video/quicktime":
+            mime_type = "video/mp4"
 
         range_header = self.headers.get("Range")
         if not range_header or as_download:
@@ -426,7 +426,7 @@ class VideoPreviewServer:
             "badge1": badge1,
             "badge2": badge2,
             "badge3": badge3,
-            "mime1": "video/quicktime" if file1_path.lower().endswith(".mov") else "video/mp4",
+            "mime1": "video/mp4",
             "mime2": "video/mp4",
         }
 
