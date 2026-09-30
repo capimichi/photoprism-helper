@@ -15,6 +15,7 @@ from photoprismhelper.command.media_sync_command import MediaSyncCommand
 from photoprismhelper.command.optimize_command import VideoOptimizeCommand
 from photoprismhelper.command.stack_duplicates_command import VideoDuplicatesCommand
 from photoprismhelper.command.tag_command import TagCommand
+from photoprismhelper.command.video_prune_command import VideoPruneCommand
 from photoprismhelper.config.app_config import AppConfig
 from photoprismhelper.manager.db_manager import DbManager
 from photoprismhelper.mapper.media_mapper import MediaMapper
@@ -163,6 +164,16 @@ class DefaultContainer:
             VideoDuplicatesCommand,
             to=VideoDuplicatesCommand(
                 media_file_repository,
+                media_repository,
+                video_optimizer_service,
+                storage_analysis_service,
+                preview_server,
+                photoprism_client,
+            ),
+        )
+        self.injector.binder.bind(
+            VideoPruneCommand,
+            to=VideoPruneCommand(
                 media_repository,
                 video_optimizer_service,
                 storage_analysis_service,

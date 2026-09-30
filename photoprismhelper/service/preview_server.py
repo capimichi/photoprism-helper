@@ -17,7 +17,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Video Preview & Confronto: __TITLE__</title>
+    <title>Video Preview: __TITLE__</title>
     <style>
         :root {
             --bg: #121214;
@@ -27,6 +27,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             --accent: #3b82f6;
             --accent-green: #10b981;
             --accent-yellow: #f59e0b;
+            --accent-red: #ef4444;
             --border: #2e2e38;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -74,6 +75,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         .badge.green { color: var(--accent-green); background: rgba(16, 185, 129, 0.15); }
         .badge.blue { color: var(--accent); background: rgba(59, 130, 246, 0.15); }
         .badge.yellow { color: var(--accent-yellow); background: rgba(245, 158, 11, 0.15); }
+        .badge.red { color: var(--accent-red); background: rgba(239, 68, 68, 0.15); }
         
         .controls-bar {
             background: var(--card-bg);
@@ -103,6 +105,11 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 20px;
+        }
+        .players-grid.single-mode {
+            grid-template-columns: 1fr;
+            max-width: 1000px;
+            margin: 0 auto;
         }
         @media (max-width: 900px) {
             .players-grid { grid-template-columns: 1fr; }
@@ -170,28 +177,25 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="container">
         <header>
             <div>
-                <h1>Confronto Video: __TITLE__</h1>
+                <h1>__TITLE__</h1>
                 <p style="color: var(--text-dim); font-size: 0.85rem; margin-top: 4px;">__SUBTITLE__</p>
             </div>
             <div class="badges">
                 <span class="badge blue">__BADGE1__</span>
-                <span class="badge green">__BADGE2__</span>
+                __BADGE2_HTML__
                 __BADGE3_HTML__
             </div>
         </header>
 
         <div class="controls-bar">
-            <label class="sync-toggle">
-                <input type="checkbox" id="syncCheckbox" checked>
-                <span>Sincronizza Riproduzione e Posizione temporale (Scrub)</span>
-            </label>
+            __CONTROLS_LEFT__
             <div>
                 <a href="/stream/file1?download=1" class="btn" download>Scarica __LABEL1__</a>
-                <a href="/stream/file2?download=1" class="btn" download>Scarica __LABEL2__</a>
+                __DOWNLOAD_FILE2_HTML__
             </div>
         </div>
 
-        <div class="players-grid">
+        <div class="players-grid __GRID_CLASS__">
             <div class="player-card">
                 <div class="player-header">
                     <span class="player-title">__LABEL1__</span>
@@ -206,59 +210,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 </div>
             </div>
 
-            <div class="player-card">
-                <div class="player-header">
-                    <span class="player-title">__LABEL2__</span>
-                    <span class="player-meta">__INFO2__</span>
-                </div>
-                <div class="video-wrapper">
-                    <video id="video2" controls preload="auto" playsinline>
-                        <source src="/stream/file2" type="__MIME2__">
-                        <source src="/stream/file2">
-                        Il tuo browser non supporta il tag video HTML5.
-                    </video>
-                </div>
-            </div>
+            __PLAYER2_HTML__
         </div>
 
         <div class="footer-note">
-            <p>💡 <strong>Istruzioni:</strong> Controlla la qualità del video, la fluidità e i colori. Se il browser non riesce a decodificare direttamente il codec originale (es. QuickTime HEVC senza estensioni), puoi scaricare il file con i pulsanti in alto o visualizzarlo su PhotoPrism. Quando hai finito, torna nel <strong>terminale</strong> per confermare o annullare l'operazione.</p>
+            <p>💡 <strong>Istruzioni:</strong> Controlla la qualità del video, la fluidità e i colori. Se il browser non riesce a decodificare direttamente il codec originale (es. QuickTime HEVC senza estensioni), puoi scaricare il file con il pulsante in alto. Quando hai finito, torna nel <strong>terminale</strong> per confermare o annullare l'operazione.</p>
         </div>
     </div>
 
-    <script>
-        const v1 = document.getElementById('video1');
-        const v2 = document.getElementById('video2');
-        const syncCheckbox = document.getElementById('syncCheckbox');
-        let isSyncing = false;
-
-        function syncVideos(source, target) {
-            if (!syncCheckbox.checked || isSyncing) return;
-            isSyncing = true;
-            if (Math.abs(target.currentTime - source.currentTime) > 0.15) {
-                target.currentTime = source.currentTime;
-            }
-            if (source.paused && !target.paused) {
-                target.pause();
-            } else if (!source.paused && target.paused) {
-                target.play().catch(() => {});
-            }
-            setTimeout(() => { isSyncing = false; }, 50);
-        }
-
-        ['play', 'pause', 'seeking', 'seeked'].forEach(evt => {
-            v1.addEventListener(evt, () => syncVideos(v1, v2));
-            v2.addEventListener(evt, () => syncVideos(v2, v1));
-        });
-
-        // Periodic sync in case of drift
-        v1.addEventListener('timeupdate', () => {
-            if (!syncCheckbox.checked || isSyncing || v1.paused) return;
-            if (Math.abs(v2.currentTime - v1.currentTime) > 0.3) {
-                v2.currentTime = v1.currentTime;
-            }
-        });
-    </script>
+    __SCRIPT_BLOCK__
 </body>
 </html>
 """
@@ -299,21 +259,93 @@ class RangeRequestHandler(BaseHTTPRequestHandler):
 
     def _serve_html(self) -> None:
         ctx = self.server_context
+        has_file2 = bool(ctx.get("file2_path"))
+
+        badge2_html = f'<span class="badge green">{ctx.get("badge2")}</span>' if ctx.get("badge2") else ""
         badge3_html = f'<span class="badge yellow">{ctx.get("badge3")}</span>' if ctx.get("badge3") else ""
+
+        if has_file2:
+            grid_class = ""
+            controls_left = """
+            <label class="sync-toggle">
+                <input type="checkbox" id="syncCheckbox" checked>
+                <span>Sincronizza Riproduzione e Posizione temporale (Scrub)</span>
+            </label>
+            """
+            download_file2_html = f'<a href="/stream/file2?download=1" class="btn" download>Scarica {ctx.get("label2", "File 2")}</a>'
+            player2_html = f"""
+            <div class="player-card">
+                <div class="player-header">
+                    <span class="player-title">{ctx.get("label2", "File 2")}</span>
+                    <span class="player-meta">{ctx.get("info2", "")}</span>
+                </div>
+                <div class="video-wrapper">
+                    <video id="video2" controls preload="auto" playsinline>
+                        <source src="/stream/file2" type="{ctx.get('mime2', 'video/mp4')}">
+                        <source src="/stream/file2">
+                        Il tuo browser non supporta il tag video HTML5.
+                    </video>
+                </div>
+            </div>
+            """
+            script_block = """
+            <script>
+                const v1 = document.getElementById('video1');
+                const v2 = document.getElementById('video2');
+                const syncCheckbox = document.getElementById('syncCheckbox');
+                let isSyncing = false;
+
+                function syncVideos(source, target) {
+                    if (!syncCheckbox || !syncCheckbox.checked || isSyncing || !target) return;
+                    isSyncing = true;
+                    if (Math.abs(target.currentTime - source.currentTime) > 0.15) {
+                        target.currentTime = source.currentTime;
+                    }
+                    if (source.paused && !target.paused) {
+                        target.pause();
+                    } else if (!source.paused && target.paused) {
+                        target.play().catch(() => {});
+                    }
+                    setTimeout(() => { isSyncing = false; }, 50);
+                }
+
+                if (v1 && v2) {
+                    ['play', 'pause', 'seeking', 'seeked'].forEach(evt => {
+                        v1.addEventListener(evt, () => syncVideos(v1, v2));
+                        v2.addEventListener(evt, () => syncVideos(v2, v1));
+                    });
+
+                    v1.addEventListener('timeupdate', () => {
+                        if (!syncCheckbox || !syncCheckbox.checked || isSyncing || v1.paused) return;
+                        if (Math.abs(v2.currentTime - v1.currentTime) > 0.3) {
+                            v2.currentTime = v1.currentTime;
+                        }
+                    });
+                }
+            </script>
+            """
+        else:
+            grid_class = "single-mode"
+            controls_left = '<span style="color: var(--text-dim);">📺 Visualizzatore Video Singolo</span>'
+            download_file2_html = ""
+            player2_html = ""
+            script_block = ""
 
         html = (
             HTML_TEMPLATE
-            .replace("__TITLE__", ctx.get("title", "Video Comparison"))
+            .replace("__TITLE__", ctx.get("title", "Video Preview"))
             .replace("__SUBTITLE__", ctx.get("subtitle", ""))
             .replace("__BADGE1__", ctx.get("badge1", ""))
-            .replace("__BADGE2__", ctx.get("badge2", ""))
+            .replace("__BADGE2_HTML__", badge2_html)
             .replace("__BADGE3_HTML__", badge3_html)
-            .replace("__LABEL1__", ctx.get("label1", "File 1"))
-            .replace("__LABEL2__", ctx.get("label2", "File 2"))
+            .replace("__CONTROLS_LEFT__", controls_left)
+            .replace("__DOWNLOAD_FILE2_HTML__", download_file2_html)
+            .replace("__GRID_CLASS__", grid_class)
+            .replace("__LABEL1__", ctx.get("label1", "Video"))
             .replace("__INFO1__", ctx.get("info1", ""))
-            .replace("__INFO2__", ctx.get("info2", ""))
             .replace("__MIME1__", ctx.get("mime1", "video/mp4"))
-            .replace("__MIME2__", ctx.get("mime2", "video/mp4"))
+            .replace("__PLAYER2_HTML__", player2_html)
+            .replace("__SCRIPT_BLOCK__", script_block)
         )
         data = html.encode("utf-8")
         self.send_response(200)
@@ -400,18 +432,21 @@ class VideoPreviewServer:
     def start(
         self,
         file1_path: str,
-        file2_path: str,
-        title: str,
+        file2_path: str = "",
+        title: str = "Video Preview",
         subtitle: str = "",
-        label1: str = "Originale",
-        label2: str = "Ottimizzato",
+        label1: str = "Video",
+        label2: str = "Confronto",
         info1: str = "",
         info2: str = "",
         badge1: str = "",
         badge2: str = "",
         badge3: str = "",
     ) -> str:
-        """Start ephemeral preview server in a background thread and return access URL."""
+        """Start ephemeral preview server in a background thread and return access URL.
+
+        If file2_path is empty, serves single-video inspection player.
+        """
         self.stop()
 
         context = {

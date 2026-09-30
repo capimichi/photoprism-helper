@@ -381,6 +381,14 @@ class VideoOptimizerService:
             else:
                 os.remove(disk_path)
 
+        # Also remove any associated sidecar (e.g., .mov.jpg)
+        sidecar_path = f"{disk_path}.jpg"
+        if os.path.exists(sidecar_path):
+            try:
+                os.remove(sidecar_path)
+            except OSError:
+                pass
+
         if self._file_repository:
             session = self._file_repository.get_session()
             try:
@@ -397,4 +405,68 @@ class VideoOptimizerService:
                 logger.warning("Could not trigger PhotoPrism cleanup: %s", e)
 
         return True, f"Removed duplicate {file_item.file_name} ({disk_path})"
+
+    def delete_media_item(
+        self, item: MediaItem, keep_backup: bool = False, notify_photoprism: bool = True
+    ) -> tuple[bool, str]:
+        """Completely delete a media item, all its stack files on disk, and records from DB."""
+        disk_path = self.resolve_disk_path(item.file_path)
+        deleted_paths: list[str] = []
+
+        # Find all stack files for this media from the file repository
+        files_to_remove: list[str] = []
+        if self._file_repository:
+            session = self._file_repository.get_session()
+            try:
+                stack_files = self._file_repository.get_by_media_uid(session, item.uid)
+                for f in stack_files:
+                    f_disk = self.resolve_disk_path(f.file_path)
+                    files_to_remove.append(f_disk)
+                    # Also include any sidecar jpg
+                    files_to_remove.append(f"{f_disk}.jpg")
+            finally:
+                session.close()
+
+        # Always include the primary item file and its sidecar
+        files_to_remove.append(disk_path)
+        files_to_remove.append(f"{disk_path}.jpg")
+
+        for fpath in set(files_to_remove):
+            if os.path.exists(fpath):
+                try:
+                    if keep_backup and not fpath.endswith(".jpg"):
+                        shutil.move(fpath, f"{fpath}.bak")
+                    else:
+                        os.remove(fpath)
+                    deleted_paths.append(fpath)
+                except OSError as e:
+                    logger.warning("Failed to remove file %s: %s", fpath, e)
+
+        # Remove from database (both media_file and media items)
+        if self._file_repository:
+            session = self._file_repository.get_session()
+            try:
+                self._file_repository.delete_by_media_uid(session, item.uid)
+                session.commit()
+            finally:
+                session.close()
+
+        session = self._media_repository.get_session()
+        try:
+            db_item = self._media_repository.get_by_uid(session, item.uid)
+            if db_item:
+                self._media_repository.delete(session, db_item)
+                session.commit()
+        finally:
+            session.close()
+
+        # Notify PhotoPrism to prune orphaned records
+        if notify_photoprism and self._photoprism_client:
+            subfolder = self.get_relative_subfolder(disk_path)
+            try:
+                self._photoprism_client.trigger_index(path=subfolder, cleanup=True)
+            except Exception as e:
+                logger.warning("Could not trigger PhotoPrism cleanup: %s", e)
+
+        return True, f"Deleted {item.file_name} and {len(deleted_paths)} associated file(s)"
 
