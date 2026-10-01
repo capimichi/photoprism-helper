@@ -43,18 +43,26 @@ class VideoDuplicatesCommand(AbstractCommand):
             default="cross",
             help="Detection mode: 'cross' (cross-UID duplicates), 'stack' (intra-stack .00001 files), or 'all' (default: cross).",
         )(fn)
-        fn = click.option("--limit", "-l", default=None, type=int, help="Limit number of duplicates to inspect (e.g. 5).")(fn)
+        fn = click.option(
+            "--keep",
+            "-k",
+            type=click.Choice(["1", "2"], case_sensitive=False),
+            default=None,
+            help="Non-interactive batch mode: keep '1' (Video 1) or '2' (Video 2) and delete the other automatically.",
+        )(fn)
+        fn = click.option("--limit", "-l", default=None, type=int, help="Limit number of duplicates to inspect (e.g. 20).")(fn)
         fn = click.option("--min-size-mb", default=10, type=int, help="Minimum file size in MB to qualify (default: 10).")(fn)
         fn = click.option("--clean", is_flag=True, default=False, help="Delete detected stack duplicate files without prompting.")(fn)
         fn = click.option("--preview/--no-preview", default=True, help="Launch ephemeral web page to compare videos side-by-side (default: True).")(fn)
-        fn = click.option("--yes", "-y", is_flag=True, default=False, help="Skip confirmation prompt before cleaning stack duplicates.")(fn)
-        fn = click.option("--keep-backup", is_flag=True, default=False, help="Rename to .bak instead of deleting from disk.")(fn)
+        fn = click.option("--yes", "-y", is_flag=True, default=False, help="Skip confirmation prompt before batch cleaning.")(fn)
+        fn = click.option("--keep-backup", is_flag=True, default=False, help="Rename to .dup.bak instead of deleting from disk.")(fn)
         fn = click.option("--notify/--no-notify", default=True, help="Notify PhotoPrism to re-index the folder (default: True).")(fn)
         return fn
 
     def run(
         self,
         mode: str = "cross",
+        keep: str | None = None,
         limit: int | None = None,
         min_size_mb: int = 10,
         clean: bool = False,
@@ -80,18 +88,22 @@ class VideoDuplicatesCommand(AbstractCommand):
         # 2. Cross-media duplicates (separate PhotoPrism items)
         if mode in ("cross", "all"):
             self._handle_cross_duplicates(
+                keep=keep,
                 limit=limit,
                 min_size_mb=min_size_mb,
                 preview=preview,
+                yes=yes,
                 keep_backup=keep_backup,
                 notify=notify,
             )
 
     def _handle_cross_duplicates(
         self,
+        keep: str | None = None,
         limit: int | None = None,
         min_size_mb: int = 10,
         preview: bool = True,
+        yes: bool = False,
         keep_backup: bool = False,
         notify: bool = True,
     ) -> None:
@@ -126,12 +138,59 @@ class VideoDuplicatesCommand(AbstractCommand):
         click.echo(
             tabulate(
                 rows,
-                headers=["#", "Video 1 (UID)", "Video 2 (UID)", "Size", "Duration", "Dates"],
+                headers=["#", "Video 1 (Primary)", "Video 2 (Duplicate)", "Size", "Duration", "Dates"],
                 tablefmt="github",
             )
         )
         click.echo()
 
+        # Batch non-interactive mode via --keep 1 or --keep 2
+        if keep:
+            keep_label = "Video 1" if keep == "1" else "Video 2"
+            delete_label = "Video 2" if keep == "1" else "Video 1"
+
+            if not yes:
+                confirm = click.confirm(
+                    f"Trovate {len(pairs)} coppie duplicate ({wasted_fmt} da liberare).\n"
+                    f"Confermi l'eliminazione automatica di {delete_label} mantenendo sempre {keep_label} per tutte le coppie?",
+                    default=False,
+                )
+                if not confirm:
+                    click.echo("Operazione annullata.")
+                    return
+
+            click.secho(f"\nEliminazione automatica in blocco ({delete_label} -> eliminato, {keep_label} -> mantenuto)...", fg="cyan", bold=True)
+            deleted_count = 0
+            freed_bytes = 0
+
+            for idx, (a, b) in enumerate(pairs, 1):
+                to_delete = b if keep == "1" else a
+                to_keep = a if keep == "1" else b
+                p_del = self._optimizer_service.resolve_disk_path(to_delete.file_path)
+                size_del = self._storage_analysis_service.format_bytes(to_delete.file_size)
+
+                if not os.path.exists(p_del):
+                    continue
+
+                ok, msg = self._optimizer_service.delete_media_item(
+                    to_delete, keep_backup=keep_backup, notify_photoprism=notify
+                )
+                if ok:
+                    click.secho(f"  [{idx}/{len(pairs)}] ✓ Eliminato: {to_delete.file_name} ({size_del}) | Mantenuto: {to_keep.file_name}", fg="green")
+                    deleted_count += 1
+                    freed_bytes += to_delete.file_size
+                else:
+                    click.secho(f"  [{idx}/{len(pairs)}] ✗ {msg}", fg="red")
+
+            freed_fmt = self._storage_analysis_service.format_bytes(freed_bytes)
+            click.secho(
+                f"\n✓ Pulizia automatica completata: {deleted_count} video duplicati eliminati, liberati {freed_fmt}!",
+                fg="green",
+                bold=True,
+            )
+            return
+
+        # Interactive mode with web preview
         deleted_count = 0
         freed_bytes = 0
 

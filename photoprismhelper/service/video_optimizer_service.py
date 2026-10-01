@@ -477,13 +477,34 @@ class VideoOptimizerService:
                             is_match = False
 
                     if is_match:
-                        pairs.append((a, b))
+                        ordered = self._order_duplicate_pair(a, b)
+                        pairs.append(ordered)
                         seen_ids.add(a.id)
                         seen_ids.add(b.id)
                         if limit and len(pairs) >= limit:
                             return pairs
 
         return pairs
+
+    @staticmethod
+    def _order_duplicate_pair(item_a: MediaItem, item_b: MediaItem) -> tuple[MediaItem, MediaItem]:
+        """Order a duplicate pair so Video 1 is the cleanest/primary and Video 2 is the duplicate candidate."""
+        import re
+
+        has_num_a = bool(re.search(r"\.\d{5}\.", item_a.file_name))
+        has_num_b = bool(re.search(r"\.\d{5}\.", item_b.file_name))
+        if has_num_a and not has_num_b:
+            return item_b, item_a
+        if has_num_b and not has_num_a:
+            return item_a, item_b
+
+        if item_a.taken_at and item_b.taken_at and item_a.taken_at != item_b.taken_at:
+            return (item_a, item_b) if item_a.taken_at <= item_b.taken_at else (item_b, item_a)
+
+        if item_a.created_at and item_b.created_at and item_a.created_at != item_b.created_at:
+            return (item_a, item_b) if item_a.created_at <= item_b.created_at else (item_b, item_a)
+
+        return (item_a, item_b) if item_a.file_name <= item_b.file_name else (item_b, item_a)
 
     def remove_duplicate_file(
         self, file_item: MediaFile, keep_backup: bool = False, notify_photoprism: bool = True
@@ -492,7 +513,7 @@ class VideoOptimizerService:
         disk_path = self.resolve_disk_path(file_item.file_path)
         if os.path.exists(disk_path):
             if keep_backup:
-                backup_path = f"{disk_path}.bak"
+                backup_path = f"{disk_path}.dup.bak"
                 shutil.move(disk_path, backup_path)
             else:
                 os.remove(disk_path)
@@ -564,7 +585,7 @@ class VideoOptimizerService:
             if os.path.exists(fpath):
                 try:
                     if keep_backup and not fpath.endswith(".jpg"):
-                        shutil.move(fpath, f"{fpath}.bak")
+                        shutil.move(fpath, f"{fpath}.dup.bak")
                     else:
                         os.remove(fpath)
                     deleted_paths.append(fpath)
