@@ -33,6 +33,7 @@ class VideoPruneCommand(AbstractCommand):
         self._photoprism_client = photoprism_client
 
     def register_options(self, fn):
+        fn = click.option("--uid", "-u", default=None, type=str, help="Target a specific media item by its UID.")(fn)
         fn = click.option("--limit", "-l", default=10, type=int, help="Number of heaviest videos to inspect (default: 10).")(fn)
         fn = click.option("--min-size-mb", default=50, type=int, help="Minimum file size in MB to qualify (default: 50).")(fn)
         fn = click.option("--preview/--no-preview", default=True, help="Launch ephemeral web player for video preview before confirmation (default: True).")(fn)
@@ -42,24 +43,35 @@ class VideoPruneCommand(AbstractCommand):
 
     def run(
         self,
+        uid: str | None = None,
         limit: int = 10,
         min_size_mb: int = 50,
         preview: bool = True,
         keep_backup: bool = False,
         notify: bool = True,
     ) -> None:
-        """Interactively inspect and delete heavy unwanted videos ordered by size."""
-        min_size_bytes = min_size_mb * 1024 * 1024
+        """Interactively inspect and delete heavy unwanted videos ordered by size or by specific UID."""
         session = self._media_repository.get_session()
         try:
-            candidates: list[MediaItem] = self._media_repository.find_video_candidates_for_optimization(
-                session, min_size_bytes=min_size_bytes, limit=limit
-            )
+            if uid:
+                item = self._media_repository.get_by_uid(session, uid)
+                if not item:
+                    click.secho(f"Media item with UID '{uid}' not found.", fg="red")
+                    return
+                candidates: list[MediaItem] = [item]
+            else:
+                min_size_bytes = min_size_mb * 1024 * 1024
+                candidates = self._media_repository.find_video_candidates_for_optimization(
+                    session, min_size_bytes=min_size_bytes, limit=limit
+                )
         finally:
             session.close()
 
         if not candidates:
-            click.echo(f"No videos found larger than {min_size_mb} MB.")
+            if uid:
+                click.secho(f"No media item found with UID '{uid}'.", fg="red")
+            else:
+                click.echo(f"No videos found larger than {min_size_mb} MB.")
             return
 
         total_bytes = sum(c.file_size for c in candidates)

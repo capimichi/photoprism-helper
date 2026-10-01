@@ -71,11 +71,15 @@ class VideoOptimizerService:
         self,
         min_size_mb: int = 10,
         limit: int = 25,
+        uid: str | None = None,
     ) -> list[MediaItem]:
-        """Find video items sorted by size descending that have not been successfully optimized yet."""
-        min_size_bytes = min_size_mb * 1024 * 1024
+        """Find video items sorted by size descending that have not been successfully optimized yet, or a specific UID."""
         session = self._media_repository.get_session()
         try:
+            if uid:
+                item = self._media_repository.get_by_uid(session, uid)
+                return [item] if item else []
+            min_size_bytes = min_size_mb * 1024 * 1024
             return self._media_repository.find_unoptimized_videos(
                 session, limit=limit, min_size_bytes=min_size_bytes
             )
@@ -430,6 +434,19 @@ class VideoOptimizerService:
         # Always include the primary item file and its sidecar
         files_to_remove.append(disk_path)
         files_to_remove.append(f"{disk_path}.jpg")
+
+        # Check if there is any conversion backup to remove if keep_backup is False
+        if not keep_backup and self._conversion_repository:
+            conv_session = self._media_repository.get_session()
+            try:
+                conversions = self._conversion_repository.get_by_media_id(conv_session, item.id)
+                for conv in conversions:
+                    if conv.backup_file_path and os.path.exists(conv.backup_file_path):
+                        files_to_remove.append(conv.backup_file_path)
+                    conv.status = "deleted"
+                conv_session.commit()
+            finally:
+                conv_session.close()
 
         for fpath in set(files_to_remove):
             if os.path.exists(fpath):

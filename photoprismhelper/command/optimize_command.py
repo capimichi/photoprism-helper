@@ -26,7 +26,8 @@ class VideoOptimizeCommand(AbstractCommand):
         self._preview_server = preview_server
 
     def register_options(self, fn):
-        fn = click.option("--limit", "-l", default=1, type=int, help="Number of videos to optimize (default: 1).")(fn)
+        fn = click.option("--uid", "-u", default=None, type=str, help="Target a specific media item by its UID.")(fn)
+        fn = click.option("--limit", "-l", default=1, type=int, help="Maximum number of videos to optimize.")(fn)
         fn = click.option("--min-size-mb", default=10, type=int, help="Minimum file size in MB to qualify (default: 10).")(fn)
         fn = click.option("--dry-run", is_flag=True, default=False, help="List candidates without converting.")(fn)
         fn = click.option("--interactive/--no-interactive", "-i/-y", default=True, help="Prompt before converting and replacing.")(fn)
@@ -39,6 +40,7 @@ class VideoOptimizeCommand(AbstractCommand):
 
     def run(
         self,
+        uid: str | None = None,
         limit: int = 1,
         min_size_mb: int = 10,
         dry_run: bool = False,
@@ -65,9 +67,12 @@ class VideoOptimizeCommand(AbstractCommand):
             self._show_history()
             return
 
-        candidates = self._optimizer_service.get_candidate_videos(min_size_mb=min_size_mb, limit=limit)
+        candidates = self._optimizer_service.get_candidate_videos(min_size_mb=min_size_mb, limit=limit, uid=uid)
         if not candidates:
-            click.echo(f"No unoptimized videos found exceeding {min_size_mb} MB.")
+            if uid:
+                click.secho(f"Media item with UID '{uid}' not found.", fg="red")
+            else:
+                click.echo(f"No unoptimized videos found exceeding {min_size_mb} MB.")
             return
 
         # Prepare summary table
