@@ -427,6 +427,7 @@ class VideoOptimizerService:
 
         pairs: list[tuple[MediaItem, MediaItem]] = []
         seen_ids: set[int] = set()
+        mdat_cache: dict[str, tuple[int, str] | None] = {}
 
         for group in dur_groups.values():
             if len(group) < 2:
@@ -437,23 +438,33 @@ class VideoOptimizerService:
                     if a.id in seen_ids or b.id in seen_ids:
                         continue
 
-                    # Fast check: relative size diff must be small (< 2% or < 5MB)
+                    # Fast in-memory check 1: relative size diff must be small (< 1% or < 2MB)
                     size_diff = abs(a.file_size - b.file_size)
-                    if size_diff > max(5 * 1024 * 1024, 0.02 * max(a.file_size, b.file_size)):
+                    if size_diff > max(2 * 1024 * 1024, 0.01 * max(a.file_size, b.file_size)):
                         continue
+
+                    # Fast in-memory check 2: taken_at proximity
+                    if a.taken_at and b.taken_at:
+                        diff_sec = abs((a.taken_at - b.taken_at).total_seconds())
+                        if diff_sec > 86400:
+                            if not (a.taken_at.minute == b.taken_at.minute and a.taken_at.second == b.taken_at.second):
+                                continue
 
                     path_a = self.resolve_disk_path(a.file_path)
                     path_b = self.resolve_disk_path(b.file_path)
-                    if not os.path.isfile(path_a) or not os.path.isfile(path_b):
-                        continue
 
-                    info_a = self.get_mdat_info(path_a)
-                    info_b = self.get_mdat_info(path_b)
+                    if path_a not in mdat_cache:
+                        mdat_cache[path_a] = self.get_mdat_info(path_a)
+                    if path_b not in mdat_cache:
+                        mdat_cache[path_b] = self.get_mdat_info(path_b)
+
+                    info_a = mdat_cache[path_a]
+                    info_b = mdat_cache[path_b]
 
                     is_match = False
                     if info_a and info_b:
                         is_match = (info_a == info_b)
-                    else:
+                    elif os.path.isfile(path_a) and os.path.isfile(path_b):
                         # Fallback for non-MP4: sample 1MB from 10% offset
                         try:
                             with open(path_a, "rb") as fa, open(path_b, "rb") as fb:
