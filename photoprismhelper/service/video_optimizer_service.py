@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import shutil
+import struct
 import tempfile
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 from injector import inject
+from sqlalchemy import desc, select
 
 from photoprismhelper.client.photoprism_client import PhotoprismClient
 from photoprismhelper.entity.media_conversion import MediaConversion
@@ -372,6 +376,103 @@ class VideoOptimizerService:
                         break
 
         return duplicates
+
+    @staticmethod
+    def get_mdat_info(file_path: str) -> tuple[int, str] | None:
+        """Extract QuickTime/MP4 mdat atom size and sample hash for exact video data matching."""
+        if not os.path.isfile(file_path):
+            return None
+        try:
+            with open(file_path, "rb") as f:
+                while True:
+                    header = f.read(8)
+                    if len(header) < 8:
+                        break
+                    size, atom_type = struct.unpack(">I4s", header)
+                    if atom_type == b"mdat":
+                        sample_size = min(1024 * 1024, size - 8 if size > 8 else 1024 * 1024)
+                        sample = f.read(sample_size)
+                        return (size, hashlib.md5(sample).hexdigest())
+                    if size == 1:
+                        size = struct.unpack(">Q", f.read(8))[0] - 8
+                    elif size == 0:
+                        break
+                    f.seek(size - 8, 1)
+        except Exception:
+            pass
+        return None
+
+    def find_cross_media_duplicates(
+        self,
+        min_size_mb: int = 10,
+        limit: int | None = None,
+    ) -> list[tuple[MediaItem, MediaItem]]:
+        """Find true cross-media duplicate video pairs with verified matching video payload."""
+        min_size_bytes = min_size_mb * 1024 * 1024
+        session = self._media_repository.get_session()
+        try:
+            stmt = (
+                select(MediaItem)
+                .where(MediaItem.media_type == "video", MediaItem.file_size >= min_size_bytes)
+                .order_by(desc(MediaItem.file_size))
+            )
+            videos = list(session.scalars(stmt))
+        finally:
+            session.close()
+
+        dur_groups: dict[tuple[float, int | None, int | None], list[MediaItem]] = defaultdict(list)
+        for v in videos:
+            if v.duration and v.duration > 0.5:
+                dur_groups[(round(v.duration, 1), v.width, v.height)].append(v)
+
+        pairs: list[tuple[MediaItem, MediaItem]] = []
+        seen_ids: set[int] = set()
+
+        for group in dur_groups.values():
+            if len(group) < 2:
+                continue
+            for i in range(len(group)):
+                for j in range(i + 1, len(group)):
+                    a, b = group[i], group[j]
+                    if a.id in seen_ids or b.id in seen_ids:
+                        continue
+
+                    # Fast check: relative size diff must be small (< 2% or < 5MB)
+                    size_diff = abs(a.file_size - b.file_size)
+                    if size_diff > max(5 * 1024 * 1024, 0.02 * max(a.file_size, b.file_size)):
+                        continue
+
+                    path_a = self.resolve_disk_path(a.file_path)
+                    path_b = self.resolve_disk_path(b.file_path)
+                    if not os.path.isfile(path_a) or not os.path.isfile(path_b):
+                        continue
+
+                    info_a = self.get_mdat_info(path_a)
+                    info_b = self.get_mdat_info(path_b)
+
+                    is_match = False
+                    if info_a and info_b:
+                        is_match = (info_a == info_b)
+                    else:
+                        # Fallback for non-MP4: sample 1MB from 10% offset
+                        try:
+                            with open(path_a, "rb") as fa, open(path_b, "rb") as fb:
+                                offset_a = int(a.file_size * 0.1)
+                                offset_b = int(b.file_size * 0.1)
+                                fa.seek(offset_a)
+                                fb.seek(offset_b)
+                                is_match = (fa.read(1024 * 1024) == fb.read(1024 * 1024))
+                        except Exception:
+                            is_match = False
+
+                    if is_match:
+                        pairs.append((a, b))
+                        seen_ids.add(a.id)
+                        seen_ids.add(b.id)
+                        if limit and len(pairs) >= limit:
+                            return pairs
+
+        return pairs
 
     def remove_duplicate_file(
         self, file_item: MediaFile, keep_backup: bool = False, notify_photoprism: bool = True
