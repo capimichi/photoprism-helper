@@ -82,6 +82,16 @@ class VideoConverter:
             logger.debug("Encoder probe failed for %s: %s", cfg.name, e)
             return False
 
+    def get_software_encoder(self) -> EncoderConfig:
+        """Return the CPU fallback encoder configuration (libx265)."""
+        return EncoderConfig(
+            name="libx265",
+            is_hardware=False,
+            description="Software CPU fallback (libx265)",
+            scale_filter_template="scale=-2:{height}",
+            output_args=["-c:v", "libx265", "-crf", "22", "-preset", "medium", "-pix_fmt", "yuv420p10le"],
+        )
+
     def detect_encoder(self) -> EncoderConfig:
         """Detect the best available H.265/HEVC encoder (Hardware GPU or CPU fallback)."""
         if self._cached_encoder is not None:
@@ -89,12 +99,7 @@ class VideoConverter:
 
         if not self._ffmpeg_bin:
             logger.warning("ffmpeg binary not found. Falling back to default CPU config.")
-            self._cached_encoder = EncoderConfig(
-                name="libx265",
-                is_hardware=False,
-                description="Software CPU fallback (libx265)",
-                output_args=["-c:v", "libx265", "-crf", "22", "-preset", "medium"],
-            )
+            self._cached_encoder = self.get_software_encoder()
             return self._cached_encoder
 
         # Candidate encoders ordered by preference
@@ -147,13 +152,7 @@ class VideoConverter:
 
         # Safe fallback: Software CPU (libx265)
         logger.info("No compatible GPU accelerator detected. Using CPU encoder: libx265 (preset medium, crf 22).")
-        self._cached_encoder = EncoderConfig(
-            name="libx265",
-            is_hardware=False,
-            description="Software CPU (libx265)",
-            scale_filter_template="scale=-2:{height}",
-            output_args=["-c:v", "libx265", "-crf", "22", "-preset", "medium", "-pix_fmt", "yuv420p10le"],
-        )
+        self._cached_encoder = self.get_software_encoder()
         return self._cached_encoder
 
     def get_stream_info(self, file_path: str) -> dict[str, Any]:
@@ -211,35 +210,16 @@ class VideoConverter:
         msg = f"duration: {out_duration:.1f}s, streams verified"
         return True, msg
 
-    def convert(
+    def _execute_ffmpeg(
         self,
+        encoder_cfg: EncoderConfig,
         input_path: str,
         output_path: str,
-        max_height: int = 1080,
-        progress_callback: Callable[[float], None] | None = None,
-    ) -> ConversionResult:
-        """Convert video to optimized 1080p MP4 preserving audio, 60fps, and cloning metadata."""
-        if not self._ffmpeg_bin:
-            return ConversionResult(
-                success=False,
-                output_path=output_path,
-                original_size=os.path.getsize(input_path) if os.path.isfile(input_path) else 0,
-                optimized_size=0,
-                duration_seconds=0,
-                error_message="ffmpeg binary not found.",
-            )
-
-        start_time = time.time()
-        orig_size = os.path.getsize(input_path)
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-        encoder_cfg = self.detect_encoder()
+        max_height: int,
+        total_duration: float,
+    ) -> tuple[int, str]:
+        """Execute ffmpeg process with real-time progress logging and return (returncode, stderr)."""
         scale_filter = encoder_cfg.scale_filter_template.format(height=max_height)
-
-        # Get total duration for percentage calculation
-        in_info = self.get_stream_info(input_path)
-        total_duration = float(in_info.get("format", {}).get("duration", 0) or 0)
-
         cmd = [
             self._ffmpeg_bin,
             "-y",
@@ -273,48 +253,109 @@ class VideoConverter:
         fps = "0"
         speed = "1.0x"
 
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+        if proc.stdout:
+            for line in proc.stdout:
+                line = line.strip()
+                if line.startswith("fps="):
+                    fps = line.split("=")[1].strip()
+                elif line.startswith("speed="):
+                    speed = line.split("=")[1].strip()
+                elif line.startswith("out_time="):
+                    t_str = line.split("=")[1].strip()
+                    parts = t_str.split(":")
+                    if len(parts) == 3 and total_duration > 0:
+                        try:
+                            curr_sec = float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+                            pct = min(100.0, (curr_sec / total_duration) * 100)
+                            bar_len = 20
+                            filled = int(bar_len * pct / 100)
+                            bar = "=" * filled + "-" * (bar_len - filled)
+                            curr_m, curr_s = int(curr_sec // 60), int(curr_sec % 60)
+                            tot_m, tot_s = int(total_duration // 60), int(total_duration % 60)
+                            sys.stdout.write(
+                                f"\r  [Encoding ({encoder_cfg.name})] {pct:5.1f}% [{bar}] {curr_m:02d}:{curr_s:02d}/{tot_m:02d}:{tot_s:02d} ({fps} fps, {speed})"
+                            )
+                            sys.stdout.flush()
+                        except Exception:
+                            pass
+
+        proc.wait()
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+        err_text = proc.stderr.read() if proc.stderr else ""
+        return proc.returncode, err_text
+
+    def convert(
+        self,
+        input_path: str,
+        output_path: str,
+        max_height: int = 1080,
+        progress_callback: Callable[[float], None] | None = None,
+    ) -> ConversionResult:
+        """Convert video to optimized 1080p MP4 preserving audio, 60fps, and cloning metadata."""
+        if not self._ffmpeg_bin:
+            return ConversionResult(
+                success=False,
+                output_path=output_path,
+                original_size=os.path.getsize(input_path) if os.path.isfile(input_path) else 0,
+                optimized_size=0,
+                duration_seconds=0,
+                error_message="ffmpeg binary not found.",
             )
 
-            if proc.stdout:
-                for line in proc.stdout:
-                    line = line.strip()
-                    if line.startswith("fps="):
-                        fps = line.split("=")[1].strip()
-                    elif line.startswith("speed="):
-                        speed = line.split("=")[1].strip()
-                    elif line.startswith("out_time="):
-                        t_str = line.split("=")[1].strip()
-                        parts = t_str.split(":")
-                        if len(parts) == 3 and total_duration > 0:
-                            try:
-                                curr_sec = float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
-                                pct = min(100.0, (curr_sec / total_duration) * 100)
-                                bar_len = 20
-                                filled = int(bar_len * pct / 100)
-                                bar = "=" * filled + "-" * (bar_len - filled)
-                                curr_m, curr_s = int(curr_sec // 60), int(curr_sec % 60)
-                                tot_m, tot_s = int(total_duration // 60), int(total_duration % 60)
-                                sys.stdout.write(
-                                    f"\r  [Encoding] {pct:5.1f}% [{bar}] {curr_m:02d}:{curr_s:02d}/{tot_m:02d}:{tot_s:02d} ({fps} fps, {speed})"
-                                )
-                                sys.stdout.flush()
-                            except Exception:
-                                pass
+        start_time = time.time()
+        orig_size = os.path.getsize(input_path)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-            proc.wait()
-            sys.stdout.write("\n")
-            sys.stdout.flush()
+        encoder_cfg = self.detect_encoder()
+        scale_filter = encoder_cfg.scale_filter_template.format(height=max_height)
 
-            if proc.returncode != 0:
-                err_text = proc.stderr.read() if proc.stderr else ""
-                logger.error("ffmpeg failed with code %d: %s", proc.returncode, err_text)
+        # Get total duration for percentage calculation
+        in_info = self.get_stream_info(input_path)
+        total_duration = float(in_info.get("format", {}).get("duration", 0) or 0)
+
+        try:
+            returncode, err_text = self._execute_ffmpeg(
+                encoder_cfg, input_path, output_path, max_height, total_duration
+            )
+
+            # Automatic fallback to software CPU encoder (libx265) if hardware acceleration fails
+            if returncode != 0 and encoder_cfg.is_hardware:
+                fallback_cfg = self.get_software_encoder()
+                logger.warning(
+                    "Hardware encoder '%s' failed on '%s' (code %d). Falling back to software CPU (%s)...",
+                    encoder_cfg.name,
+                    input_path,
+                    returncode,
+                    fallback_cfg.name,
+                )
+                sys.stdout.write(
+                    f"  ⚠ Hardware encoder ({encoder_cfg.name}) failed. Falling back to CPU ({fallback_cfg.name})...\n"
+                )
+                sys.stdout.flush()
+
+                if os.path.exists(output_path):
+                    try:
+                        os.remove(output_path)
+                    except OSError:
+                        pass
+
+                encoder_cfg = fallback_cfg
+                returncode, err_text = self._execute_ffmpeg(
+                    encoder_cfg, input_path, output_path, max_height, total_duration
+                )
+
+            if returncode != 0:
+                logger.error("ffmpeg failed with code %d: %s", returncode, err_text)
                 return ConversionResult(
                     success=False,
                     output_path=output_path,
