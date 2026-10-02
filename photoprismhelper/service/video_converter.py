@@ -217,9 +217,25 @@ class VideoConverter:
         output_path: str,
         max_height: int,
         total_duration: float,
+        in_info: dict[str, Any] | None = None,
     ) -> tuple[int, str]:
         """Execute ffmpeg process with real-time progress logging and return (returncode, stderr)."""
         scale_filter = encoder_cfg.scale_filter_template.format(height=max_height)
+
+        # Check audio codec compatibility for MP4 container
+        audio_args = ["-c:a", "copy"]
+        if in_info:
+            for s in in_info.get("streams", []):
+                if s.get("codec_type") == "audio":
+                    acodec = str(s.get("codec_name", "")).lower()
+                    if acodec not in ("aac", "mp3", "alac", "ac3", "eac3"):
+                        logger.info(
+                            "Audio codec '%s' cannot be directly copied into MP4 container. Transcoding audio to AAC...",
+                            acodec,
+                        )
+                        audio_args = ["-c:a", "aac", "-b:a", "128k"]
+                    break
+
         cmd = [
             self._ffmpeg_bin,
             "-y",
@@ -232,8 +248,7 @@ class VideoConverter:
             *encoder_cfg.output_args,
             "-tag:v",
             "hvc1",
-            "-c:a",
-            "copy",
+            *audio_args,
             "-movflags",
             "+faststart",
             "-progress",
@@ -325,7 +340,7 @@ class VideoConverter:
 
         try:
             returncode, err_text = self._execute_ffmpeg(
-                encoder_cfg, input_path, output_path, max_height, total_duration
+                encoder_cfg, input_path, output_path, max_height, total_duration, in_info=in_info
             )
 
             # Automatic fallback to software CPU encoder (libx265) if hardware acceleration fails
@@ -351,7 +366,7 @@ class VideoConverter:
 
                 encoder_cfg = fallback_cfg
                 returncode, err_text = self._execute_ffmpeg(
-                    encoder_cfg, input_path, output_path, max_height, total_duration
+                    encoder_cfg, input_path, output_path, max_height, total_duration, in_info=in_info
                 )
 
             if returncode != 0:

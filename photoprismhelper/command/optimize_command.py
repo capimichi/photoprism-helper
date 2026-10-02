@@ -110,23 +110,28 @@ class VideoOptimizeCommand(AbstractCommand):
             disk_path = self._optimizer_service.resolve_disk_path(item.file_path)
             click.echo(f"  • Disk path: {disk_path}")
 
+            if not os.path.isfile(disk_path):
+                click.secho(f"  ⚠ File not found on disk (already optimized or moved): {disk_path}. Skipping.", fg="yellow")
+                continue
+
             if interactive:
                 confirm = click.confirm(f"  Start 1080p HEVC optimization for {item.file_name}?", default=True)
                 if not confirm:
                     click.echo("  Skipped.")
                     continue
 
-            with tempfile.TemporaryDirectory(prefix="pp_opt_") as tmp_dir:
-                click.echo("  Encoding and cloning metadata in local staging (/tmp)...")
-                draft = self._optimizer_service.prepare_optimization(
-                    item,
-                    tmp_dir=tmp_dir,
-                    max_height=1080,
-                )
+            try:
+                with tempfile.TemporaryDirectory(prefix="pp_opt_") as tmp_dir:
+                    click.echo("  Encoding and cloning metadata in local staging (/tmp)...")
+                    draft = self._optimizer_service.prepare_optimization(
+                        item,
+                        tmp_dir=tmp_dir,
+                        max_height=1080,
+                    )
 
-                if not draft.success:
-                    click.secho(f"  ✗ Conversion failed: {draft.error_message}", fg="red")
-                    continue
+                    if not draft.success:
+                        click.secho(f"  ✗ Conversion failed: {draft.error_message}", fg="red")
+                        continue
 
                 opt_fmt = self._storage_analysis_service.format_bytes(draft.optimized_size)
                 saved_fmt = self._storage_analysis_service.format_bytes(draft.original_size - draft.optimized_size)
@@ -202,6 +207,8 @@ class VideoOptimizeCommand(AbstractCommand):
                                 click.secho(f"    ✓ {msg}", fg="green")
                             else:
                                 click.secho(f"    ✗ Failed to remove {d.file_name}: {msg}", fg="red")
+            except Exception as e:
+                click.secho(f"  ✗ Unexpected error processing {item.file_name}: {e}. Skipping.", fg="red")
 
     def _show_history(self) -> None:
         session = self._optimizer_service._media_repository.get_session()
