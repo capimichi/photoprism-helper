@@ -44,6 +44,13 @@ class OptimizationDraft:
     optimized_metadata: dict[str, Any] = field(default_factory=dict)
     duration_seconds: float = 0.0
     encoder_used: str = ""
+    is_hardware: bool = False
+    fallback_triggered: bool = False
+    fallback_reason: str | None = None
+    audio_transcoded: bool = False
+    source_audio_codec: str | None = None
+    source_video_codec: str | None = None
+    peculiarities: list[str] = field(default_factory=list)
     success: bool = False
     error_message: str | None = None
     integrity_message: str = ""
@@ -148,6 +155,13 @@ class VideoOptimizerService:
         result = self._converter.convert(input_path, temp_output, max_height=max_height)
         draft.duration_seconds = result.duration_seconds
         draft.encoder_used = result.encoder_used
+        draft.is_hardware = result.is_hardware
+        draft.fallback_triggered = result.fallback_triggered
+        draft.fallback_reason = result.fallback_reason
+        draft.audio_transcoded = result.audio_transcoded
+        draft.source_audio_codec = result.source_audio_codec
+        draft.source_video_codec = result.source_video_codec
+        draft.peculiarities = result.peculiarities
 
         if not result.success:
             draft.success = False
@@ -195,6 +209,14 @@ class VideoOptimizerService:
                 optimized_hash=draft.optimized_hash,
                 optimized_metadata=draft.optimized_metadata,
                 duration_seconds=draft.duration_seconds,
+                encoder_used=draft.encoder_used,
+                is_hardware=draft.is_hardware,
+                fallback_triggered=draft.fallback_triggered,
+                fallback_reason=draft.fallback_reason,
+                audio_transcoded=draft.audio_transcoded,
+                source_audio_codec=draft.source_audio_codec,
+                source_video_codec=draft.source_video_codec,
+                peculiarities=draft.peculiarities,
                 completed_at=datetime.utcnow(),
             )
             self._conversion_repository.create(session, conversion)

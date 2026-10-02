@@ -34,6 +34,13 @@ class ConversionResult:
     optimized_size: int
     duration_seconds: float
     encoder_used: str = ""
+    is_hardware: bool = False
+    fallback_triggered: bool = False
+    fallback_reason: str | None = None
+    audio_transcoded: bool = False
+    source_audio_codec: str | None = None
+    source_video_codec: str | None = None
+    peculiarities: list[str] = field(default_factory=list)
     error_message: str | None = None
     integrity_message: str = ""
 
@@ -334,9 +341,29 @@ class VideoConverter:
         encoder_cfg = self.detect_encoder()
         scale_filter = encoder_cfg.scale_filter_template.format(height=max_height)
 
-        # Get total duration for percentage calculation
+        # Get total duration and inspect streams
         in_info = self.get_stream_info(input_path)
         total_duration = float(in_info.get("format", {}).get("duration", 0) or 0)
+
+        fallback_triggered = False
+        fallback_reason: str | None = None
+        audio_transcoded = False
+        source_audio_codec: str | None = None
+        source_video_codec: str | None = None
+        peculiarities: list[str] = []
+
+        for s in in_info.get("streams", []):
+            if s.get("codec_type") == "video" and not source_video_codec:
+                source_video_codec = s.get("codec_name")
+                tags = s.get("tags", {})
+                sd_list = s.get("side_data_list", [])
+                if "rotate" in tags or any("rotation" in str(sd) for sd in sd_list):
+                    peculiarities.append("rotated")
+            elif s.get("codec_type") == "audio" and not source_audio_codec:
+                source_audio_codec = str(s.get("codec_name", "")).lower()
+                if source_audio_codec not in ("aac", "mp3", "alac", "ac3", "eac3"):
+                    audio_transcoded = True
+                    peculiarities.append(f"audio_{source_audio_codec}_to_aac")
 
         try:
             returncode, err_text = self._execute_ffmpeg(
@@ -345,6 +372,10 @@ class VideoConverter:
 
             # Automatic fallback to software CPU encoder (libx265) if hardware acceleration fails
             if returncode != 0 and encoder_cfg.is_hardware:
+                fallback_triggered = True
+                fallback_reason = (err_text[-180:] if err_text else "hardware encode failed").strip()
+                peculiarities.append("gpu_fallback_to_cpu")
+
                 fallback_cfg = self.get_software_encoder()
                 logger.warning(
                     "Hardware encoder '%s' failed on '%s' (code %d). Falling back to software CPU (%s)...",
@@ -378,6 +409,13 @@ class VideoConverter:
                     optimized_size=0,
                     duration_seconds=time.time() - start_time,
                     encoder_used=encoder_cfg.name,
+                    is_hardware=encoder_cfg.is_hardware,
+                    fallback_triggered=fallback_triggered,
+                    fallback_reason=fallback_reason,
+                    audio_transcoded=audio_transcoded,
+                    source_audio_codec=source_audio_codec,
+                    source_video_codec=source_video_codec,
+                    peculiarities=peculiarities,
                     error_message=f"ffmpeg error: {err_text[-300:] if err_text else 'unknown error'}",
                 )
         except Exception as e:
@@ -389,6 +427,13 @@ class VideoConverter:
                 optimized_size=0,
                 duration_seconds=time.time() - start_time,
                 encoder_used=encoder_cfg.name,
+                is_hardware=encoder_cfg.is_hardware,
+                fallback_triggered=fallback_triggered,
+                fallback_reason=fallback_reason,
+                audio_transcoded=audio_transcoded,
+                source_audio_codec=source_audio_codec,
+                source_video_codec=source_video_codec,
+                peculiarities=peculiarities,
                 error_message=str(e),
             )
 
@@ -409,6 +454,13 @@ class VideoConverter:
                 optimized_size=0,
                 duration_seconds=elapsed,
                 encoder_used=encoder_cfg.name,
+                is_hardware=encoder_cfg.is_hardware,
+                fallback_triggered=fallback_triggered,
+                fallback_reason=fallback_reason,
+                audio_transcoded=audio_transcoded,
+                source_audio_codec=source_audio_codec,
+                source_video_codec=source_video_codec,
+                peculiarities=peculiarities,
                 error_message=f"Verification failed: {msg}",
             )
 
@@ -428,6 +480,13 @@ class VideoConverter:
                 optimized_size=opt_size,
                 duration_seconds=elapsed,
                 encoder_used=encoder_cfg.name,
+                is_hardware=encoder_cfg.is_hardware,
+                fallback_triggered=fallback_triggered,
+                fallback_reason=fallback_reason,
+                audio_transcoded=audio_transcoded,
+                source_audio_codec=source_audio_codec,
+                source_video_codec=source_video_codec,
+                peculiarities=peculiarities,
                 error_message=(
                     f"Optimized file is not smaller than original "
                     f"({self._format_bytes(opt_size)} >= {self._format_bytes(orig_size)}). Optimization aborted."
@@ -448,6 +507,13 @@ class VideoConverter:
             optimized_size=opt_size,
             duration_seconds=elapsed,
             encoder_used=encoder_cfg.name,
+            is_hardware=encoder_cfg.is_hardware,
+            fallback_triggered=fallback_triggered,
+            fallback_reason=fallback_reason,
+            audio_transcoded=audio_transcoded,
+            source_audio_codec=source_audio_codec,
+            source_video_codec=source_video_codec,
+            peculiarities=peculiarities,
             integrity_message=msg,
         )
 

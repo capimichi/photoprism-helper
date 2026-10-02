@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from sqlalchemy import BigInteger, DateTime, Float, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from photoprismhelper.entity.base import Base
@@ -27,6 +27,14 @@ class MediaConversion(Base):
     original_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     optimized_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    encoder_used: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_hardware: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    fallback_triggered: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    fallback_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    audio_transcoded: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    source_audio_codec: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_video_codec: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    peculiarities: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -36,6 +36,7 @@ class VideoOptimizeCommand(AbstractCommand):
         fn = click.option("--preview/--no-preview", default=False, help="Launch ephemeral web page to compare videos side-by-side.")(fn)
         fn = click.option("--revert", "revert_id", default=None, type=int, help="Revert a conversion by its ID.")(fn)
         fn = click.option("--history", is_flag=True, default=False, help="Show conversion history.")(fn)
+        fn = click.option("--only-peculiar", is_flag=True, default=False, help="Filter history to only show conversions with peculiarities (e.g. CPU fallback, audio transcode).")(fn)
         return fn
 
     def run(
@@ -50,6 +51,7 @@ class VideoOptimizeCommand(AbstractCommand):
         preview: bool = False,
         revert_id: int | None = None,
         history: bool = False,
+        only_peculiar: bool = False,
     ) -> None:
         """Optimize heavy videos ordered by size, with verification and tracking."""
         # Handle revert
@@ -63,8 +65,8 @@ class VideoOptimizeCommand(AbstractCommand):
             return
 
         # Handle history
-        if history:
-            self._show_history()
+        if history or only_peculiar:
+            self._show_history(only_peculiar=only_peculiar)
             return
 
         candidates = self._optimizer_service.get_candidate_videos(min_size_mb=min_size_mb, limit=limit, uid=uid)
@@ -210,31 +212,75 @@ class VideoOptimizeCommand(AbstractCommand):
             except Exception as e:
                 click.secho(f"  ✗ Unexpected error processing {item.file_name}: {e}. Skipping.", fg="red")
 
-    def _show_history(self) -> None:
+    def _show_history(self, only_peculiar: bool = False) -> None:
         session = self._optimizer_service._media_repository.get_session()
         try:
-            conversions = self._optimizer_service._conversion_repository.list_conversions(session, limit=20)
+            limit = 50 if only_peculiar else 20
+            conversions = self._optimizer_service._conversion_repository.list_conversions(session, limit=limit)
             if not conversions:
                 click.echo("No conversion history found.")
                 return
 
             rows = []
             for cv in conversions:
+                has_peculiar = bool(cv.fallback_triggered or cv.audio_transcoded or cv.peculiarities)
+                if only_peculiar and not has_peculiar:
+                    continue
+
                 saved = (cv.original_size - (cv.optimized_size or 0)) if cv.optimized_size else 0
                 saved_fmt = self._storage_analysis_service.format_bytes(saved) if saved > 0 else "-"
                 dt = cv.created_at.strftime("%Y-%m-%d %H:%M") if cv.created_at else "-"
+
+                # Encoder label
+                enc = cv.encoder_used or "-"
+                if cv.is_hardware:
+                    enc_lbl = f"{enc} (GPU)"
+                elif cv.encoder_used:
+                    enc_lbl = f"{enc} (CPU)"
+                else:
+                    enc_lbl = "-"
+
+                # Format peculiarities badge
+                pec_labels = []
+                if cv.fallback_triggered:
+                    pec_labels.append("🖥️ CPU Fallback")
+                if cv.audio_transcoded:
+                    src_a = cv.source_audio_codec or "legacy"
+                    pec_labels.append(f"🔊 Audio ({src_a} -> aac)")
+                if cv.peculiarities:
+                    for p in cv.peculiarities:
+                        if p == "rotated":
+                            pec_labels.append("🔄 Rotated")
+                        elif p not in ("gpu_fallback_to_cpu",) and not p.startswith("audio_"):
+                            pec_labels.append(p)
+
+                pec_str = "\n".join(pec_labels) if pec_labels else "Standard"
+                backup_str = os.path.basename(cv.backup_file_path) if cv.backup_file_path else "-"
+                orig_file = os.path.basename(cv.original_file_path)
+
                 rows.append([
                     cv.id,
-                    cv.media_uid,
+                    f"{orig_file}\n({cv.media_uid})",
                     cv.status,
-                    f"{cv.original_extension} -> {cv.optimized_extension}",
                     self._storage_analysis_service.format_bytes(cv.original_size),
                     self._storage_analysis_service.format_bytes(cv.optimized_size or 0) if cv.optimized_size else "-",
                     saved_fmt,
+                    enc_lbl,
+                    pec_str,
+                    backup_str,
                     dt,
                 ])
 
-            click.echo("\n### Recent Conversions")
-            click.echo(tabulate(rows, headers=["ID", "Media UID", "Status", "Format", "Original", "Optimized", "Saved", "Date"], tablefmt="github"))
+            if not rows:
+                click.echo("No conversions with peculiarities found.")
+                return
+
+            title = "### Conversions with Peculiarities (CPU Fallback, Audio Transcode, etc.)" if only_peculiar else "### Recent Conversions"
+            click.echo(f"\n{title}")
+            click.echo(tabulate(
+                rows,
+                headers=["ID", "File (UID)", "Status", "Original", "Optimized", "Saved", "Encoder", "Peculiarities", "Backup (.bak)", "Date"],
+                tablefmt="github",
+            ))
         finally:
             session.close()
