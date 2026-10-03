@@ -136,80 +136,80 @@ class VideoOptimizeCommand(AbstractCommand):
                         click.secho(f"  ✗ Conversion failed: {draft.error_message}", fg="red")
                         continue
 
-                opt_fmt = self._storage_analysis_service.format_bytes(draft.optimized_size)
-                saved_fmt = self._storage_analysis_service.format_bytes(draft.original_size - draft.optimized_size)
-                pct = ((draft.original_size - draft.optimized_size) / draft.original_size) * 100
+                    opt_fmt = self._storage_analysis_service.format_bytes(draft.optimized_size)
+                    saved_fmt = self._storage_analysis_service.format_bytes(draft.original_size - draft.optimized_size)
+                    pct = ((draft.original_size - draft.optimized_size) / draft.original_size) * 100
 
-                click.secho(
-                    f"  ✓ Transcoding finished in {draft.duration_seconds:.1f}s (encoder: {draft.encoder_used})",
-                    fg="green",
-                )
-                click.echo(f"    - Original size:  {size_fmt}")
-                click.secho(f"    - Optimized size: {opt_fmt} (-{pct:.1f}% | risparmiati: {saved_fmt})", fg="cyan", bold=True)
-                if preview and self._preview_server:
-                    preview_url = self._preview_server.start(
-                        file1_path=disk_path,
-                        file2_path=draft.temp_output_path,
-                        title=item.file_name,
-                        subtitle=f"UID: {item.uid} | Risparmio stimato: {saved_fmt} (-{pct:.1f}%)",
-                        label1=f"Originale ({item.extension.upper()})",
-                        label2="Ottimizzato (1080p HEVC)",
-                        info1=f"Dimensione: {size_fmt}",
-                        info2=f"Dimensione: {opt_fmt} (-{pct:.1f}%)",
-                        badge1=f"Originale: {size_fmt}",
-                        badge2=f"Ottimizzato: {opt_fmt}",
-                        badge3=f"Risparmiati: {saved_fmt}",
+                    click.secho(
+                        f"  ✓ Transcoding finished in {draft.duration_seconds:.1f}s (encoder: {draft.encoder_used})",
+                        fg="green",
                     )
-                    click.secho("\n  📺 Anteprima Web attiva per il confronto:", fg="cyan", bold=True)
-                    click.secho(f"     👉 {preview_url}", fg="cyan", underline=True)
-                    click.echo("     (I video sono sincronizzati nello scrub. Aprilo nel browser per visualizzarli)\n")
-
-                try:
-                    if interactive:
-                        confirm_apply = click.confirm(f"  Apply replacement on NAS for {item.file_name}?", default=True)
-                        if not confirm_apply:
-                            click.echo("  Cancelled. Local temp discarded, NAS untouched.")
-                            continue
-
-                    conv = self._optimizer_service.apply_optimization(
-                        draft,
-                        keep_backup=keep_backup,
-                        notify_photoprism=notify,
-                    )
-                finally:
+                    click.echo(f"    - Original size:  {size_fmt}")
+                    click.secho(f"    - Optimized size: {opt_fmt} (-{pct:.1f}% | risparmiati: {saved_fmt})", fg="cyan", bold=True)
                     if preview and self._preview_server:
-                        self._preview_server.stop()
+                        preview_url = self._preview_server.start(
+                            file1_path=disk_path,
+                            file2_path=draft.temp_output_path,
+                            title=item.file_name,
+                            subtitle=f"UID: {item.uid} | Risparmio stimato: {saved_fmt} (-{pct:.1f}%)",
+                            label1=f"Originale ({item.extension.upper()})",
+                            label2="Ottimizzato (1080p HEVC)",
+                            info1=f"Dimensione: {size_fmt}",
+                            info2=f"Dimensione: {opt_fmt} (-{pct:.1f}%)",
+                            badge1=f"Originale: {size_fmt}",
+                            badge2=f"Ottimizzato: {opt_fmt}",
+                            badge3=f"Risparmiati: {saved_fmt}",
+                        )
+                        click.secho("\n  📺 Anteprima Web attiva per il confronto:", fg="cyan", bold=True)
+                        click.secho(f"     👉 {preview_url}", fg="cyan", underline=True)
+                        click.echo("     (I video sono sincronizzati nello scrub. Aprilo nel browser per visualizzarli)\n")
 
-                click.secho(f"  ✓ Conversion #{conv.id} applied to NAS!", fg="green", bold=True)
-                click.echo(f"    - New file size: {opt_fmt} (saved {saved_fmt})")
-                if keep_backup:
-                    click.echo(f"    - Backup saved at: {conv.backup_file_path}")
-                if notify:
-                    click.echo("    - PhotoPrism re-index triggered.")
+                    try:
+                        if interactive:
+                            confirm_apply = click.confirm(f"  Apply replacement on NAS for {item.file_name}?", default=True)
+                            if not confirm_apply:
+                                click.echo("  Cancelled. Local temp discarded, NAS untouched.")
+                                continue
 
-                # Check for stack duplicates (e.g. .00001.mov)
-                duplicates = self._optimizer_service.get_stack_duplicates(item.uid, primary_file_name=item.file_name)
-                if duplicates:
-                    click.secho(f"\n  ⚠ Found {len(duplicates)} duplicate/stacked video(s) in this media item:", fg="yellow")
-                    for d in duplicates:
-                        d_size = self._storage_analysis_service.format_bytes(d.file_size)
-                        click.echo(f"    • {d.file_name} ({d_size})")
+                        conv = self._optimizer_service.apply_optimization(
+                            draft,
+                            keep_backup=keep_backup,
+                            notify_photoprism=notify,
+                        )
+                    finally:
+                        if preview and self._preview_server:
+                            self._preview_server.stop()
 
-                    clean_dups = False
-                    if interactive:
-                        clean_dups = click.confirm("    Remove stack duplicate(s) to free up extra NAS space?", default=True)
-                    else:
-                        clean_dups = True
+                    click.secho(f"  ✓ Conversion #{conv.id} applied to NAS!", fg="green", bold=True)
+                    click.echo(f"    - New file size: {opt_fmt} (saved {saved_fmt})")
+                    if keep_backup:
+                        click.echo(f"    - Backup saved at: {conv.backup_file_path}")
+                    if notify:
+                        click.echo("    - PhotoPrism re-index triggered.")
 
-                    if clean_dups:
+                    # Check for stack duplicates (e.g. .00001.mov)
+                    duplicates = self._optimizer_service.get_stack_duplicates(item.uid, primary_file_name=item.file_name)
+                    if duplicates:
+                        click.secho(f"\n  ⚠ Found {len(duplicates)} duplicate/stacked video(s) in this media item:", fg="yellow")
                         for d in duplicates:
-                            ok, msg = self._optimizer_service.remove_duplicate_file(
-                                d, keep_backup=keep_backup, notify_photoprism=notify
-                            )
-                            if ok:
-                                click.secho(f"    ✓ {msg}", fg="green")
-                            else:
-                                click.secho(f"    ✗ Failed to remove {d.file_name}: {msg}", fg="red")
+                            d_size = self._storage_analysis_service.format_bytes(d.file_size)
+                            click.echo(f"    • {d.file_name} ({d_size})")
+
+                        clean_dups = False
+                        if interactive:
+                            clean_dups = click.confirm("    Remove stack duplicate(s) to free up extra NAS space?", default=True)
+                        else:
+                            clean_dups = True
+
+                        if clean_dups:
+                            for d in duplicates:
+                                ok, msg = self._optimizer_service.remove_duplicate_file(
+                                    d, keep_backup=keep_backup, notify_photoprism=notify
+                                )
+                                if ok:
+                                    click.secho(f"    ✓ {msg}", fg="green")
+                                else:
+                                    click.secho(f"    ✗ Failed to remove {d.file_name}: {msg}", fg="red")
             except Exception as e:
                 click.secho(f"  ✗ Unexpected error processing {item.file_name}: {e}. Skipping.", fg="red")
 
