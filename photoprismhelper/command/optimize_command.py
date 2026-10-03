@@ -252,6 +252,9 @@ class VideoOptimizeCommand(AbstractCommand):
                     for p in cv.peculiarities:
                         if p == "rotated":
                             pec_labels.append("🔄 Rotated")
+                        elif p.startswith("native_resolution_"):
+                            res = p.replace("native_resolution_", "")
+                            pec_labels.append(f"📐 Native {res}")
                         elif p not in ("gpu_fallback_to_cpu",) and not p.startswith("audio_"):
                             pec_labels.append(p)
 

@@ -217,17 +217,73 @@ class VideoConverter:
         msg = f"duration: {out_duration:.1f}s, streams verified"
         return True, msg
 
+    @staticmethod
+    def calculate_video_profile(
+        orig_width: int,
+        orig_height: int,
+        orig_bitrate: int,
+        max_height: int = 1080,
+    ) -> tuple[int, int, int]:
+        """Calculate (target_height, target_kbps, maxrate_kbps).
+
+        - Never upscales: if shorter dimension <= max_height, preserves native height.
+        - Sets resolution-appropriate bitrate.
+        - Caps target bitrate to at most 75% of original bitrate if known.
+        """
+        shorter_dim = min(orig_width, orig_height) if (orig_width > 0 and orig_height > 0) else orig_height
+
+        if shorter_dim <= 0:
+            target_height = max_height
+            base_kbps = 4500
+            max_kbps = 7000
+        elif shorter_dim <= 480:
+            target_height = orig_height
+            base_kbps = 1200
+            max_kbps = 2000
+        elif shorter_dim <= 720:
+            target_height = orig_height
+            base_kbps = 2500
+            max_kbps = 4000
+        elif shorter_dim <= max_height:
+            target_height = orig_height
+            base_kbps = 4500
+            max_kbps = 7000
+        else:
+            # 2K / 4K / UHD downscale
+            if orig_width >= orig_height:
+                target_height = max_height
+            else:
+                scale_factor = max_height / orig_width
+                target_height = int(round((orig_height * scale_factor) / 2) * 2)
+            base_kbps = 4500
+            max_kbps = 7000
+
+        # Ensure target_height is even (HEVC requirement)
+        if target_height % 2 != 0:
+            target_height -= 1
+
+        if orig_bitrate > 0:
+            orig_kbps = orig_bitrate // 1000
+            target_kbps = max(500, min(base_kbps, int(orig_kbps * 0.75)))
+            max_kbps = min(max_kbps, int(target_kbps * 1.5))
+        else:
+            target_kbps = base_kbps
+
+        return target_height, target_kbps, max_kbps
+
     def _execute_ffmpeg(
         self,
         encoder_cfg: EncoderConfig,
         input_path: str,
         output_path: str,
-        max_height: int,
+        target_height: int,
         total_duration: float,
+        target_kbps: int = 4500,
+        max_kbps: int = 7000,
         in_info: dict[str, Any] | None = None,
     ) -> tuple[int, str]:
         """Execute ffmpeg process with real-time progress logging and return (returncode, stderr)."""
-        scale_filter = encoder_cfg.scale_filter_template.format(height=max_height)
+        scale_filter = encoder_cfg.scale_filter_template.format(height=target_height)
 
         # Check audio codec compatibility for MP4 container
         audio_args = ["-c:a", "copy"]
@@ -243,6 +299,15 @@ class VideoConverter:
                         audio_args = ["-c:a", "aac", "-b:a", "128k"]
                     break
 
+        # Adapt output video args if using hardware encoders with bitrate controls
+        output_args = list(encoder_cfg.output_args)
+        if encoder_cfg.name == "hevc_vaapi":
+            output_args = ["-c:v", "hevc_vaapi", "-rc_mode", "VBR", "-b:v", f"{target_kbps}k", "-maxrate", f"{max_kbps}k"]
+        elif encoder_cfg.name == "hevc_nvenc":
+            output_args = ["-c:v", "hevc_nvenc", "-cq", "24", "-b:v", f"{target_kbps}k", "-maxrate", f"{max_kbps}k", "-preset", "p5", "-pix_fmt", "p010le"]
+        elif encoder_cfg.name == "hevc_videotoolbox":
+            output_args = ["-c:v", "hevc_videotoolbox", "-b:v", f"{target_kbps}k", "-pix_fmt", "p010le"]
+
         cmd = [
             self._ffmpeg_bin,
             "-y",
@@ -252,7 +317,7 @@ class VideoConverter:
             input_path,
             "-vf",
             scale_filter,
-            *encoder_cfg.output_args,
+            *output_args,
             "-tag:v",
             "hvc1",
             *audio_args,
@@ -339,7 +404,6 @@ class VideoConverter:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
         encoder_cfg = self.detect_encoder()
-        scale_filter = encoder_cfg.scale_filter_template.format(height=max_height)
 
         # Get total duration and inspect streams
         in_info = self.get_stream_info(input_path)
@@ -352,9 +416,15 @@ class VideoConverter:
         source_video_codec: str | None = None
         peculiarities: list[str] = []
 
+        orig_width = 0
+        orig_height = 0
+        orig_bitrate = 0
         for s in in_info.get("streams", []):
             if s.get("codec_type") == "video" and not source_video_codec:
                 source_video_codec = s.get("codec_name")
+                orig_width = int(s.get("width", 0) or 0)
+                orig_height = int(s.get("height", 0) or 0)
+                orig_bitrate = int(s.get("bit_rate", 0) or 0)
                 tags = s.get("tags", {})
                 sd_list = s.get("side_data_list", [])
                 if "rotate" in tags or any("rotation" in str(sd) for sd in sd_list):
@@ -365,9 +435,27 @@ class VideoConverter:
                     audio_transcoded = True
                     peculiarities.append(f"audio_{source_audio_codec}_to_aac")
 
+        if orig_bitrate <= 0:
+            orig_bitrate = int(in_info.get("format", {}).get("bit_rate", 0) or 0)
+
+        target_height, target_kbps, max_kbps = self.calculate_video_profile(
+            orig_width, orig_height, orig_bitrate, max_height=max_height
+        )
+
+        shorter_dim = min(orig_width, orig_height) if (orig_width > 0 and orig_height > 0) else orig_height
+        if 0 < shorter_dim < 1080:
+            peculiarities.append(f"native_resolution_{shorter_dim}p")
+
         try:
             returncode, err_text = self._execute_ffmpeg(
-                encoder_cfg, input_path, output_path, max_height, total_duration, in_info=in_info
+                encoder_cfg,
+                input_path,
+                output_path,
+                target_height,
+                total_duration,
+                target_kbps=target_kbps,
+                max_kbps=max_kbps,
+                in_info=in_info,
             )
 
             # Automatic fallback to software CPU encoder (libx265) if hardware acceleration fails
@@ -397,7 +485,14 @@ class VideoConverter:
 
                 encoder_cfg = fallback_cfg
                 returncode, err_text = self._execute_ffmpeg(
-                    encoder_cfg, input_path, output_path, max_height, total_duration, in_info=in_info
+                    encoder_cfg,
+                    input_path,
+                    output_path,
+                    target_height,
+                    total_duration,
+                    target_kbps=target_kbps,
+                    max_kbps=max_kbps,
+                    in_info=in_info,
                 )
 
             if returncode != 0:
