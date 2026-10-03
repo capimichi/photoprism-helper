@@ -111,6 +111,14 @@ class VideoOptimizeCommand(AbstractCommand):
             click.echo(f"\n[{idx}/{len(candidates)}] Candidate: {item.file_name} ({size_fmt})")
 
             disk_path = self._optimizer_service.resolve_disk_path(item.file_path)
+            if not os.path.isfile(disk_path):
+                # Fallback: check if item.folder_path + item.file_name exists
+                alt_rel = os.path.join(item.folder_path, item.file_name) if item.folder_path else item.file_name
+                alt_disk_path = self._optimizer_service.resolve_disk_path(alt_rel)
+                if os.path.isfile(alt_disk_path):
+                    disk_path = alt_disk_path
+                    item.file_path = alt_rel
+
             click.echo(f"  • Disk path: {disk_path}")
 
             if not os.path.isfile(disk_path):

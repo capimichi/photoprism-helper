@@ -123,6 +123,13 @@ class VideoOptimizerService:
         """
         input_path = self.resolve_disk_path(item.file_path)
         if not os.path.isfile(input_path):
+            alt_rel = os.path.join(item.folder_path, item.file_name) if item.folder_path else item.file_name
+            alt_path = self.resolve_disk_path(alt_rel)
+            if os.path.isfile(alt_path):
+                input_path = alt_path
+                item.file_path = alt_rel
+
+        if not os.path.isfile(input_path):
             raise FileNotFoundError(f"Input file not found on disk: {input_path}")
 
         orig_size = os.path.getsize(input_path)
