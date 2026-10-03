@@ -252,6 +252,8 @@ class VideoOptimizeCommand(AbstractCommand):
                     for p in cv.peculiarities:
                         if p == "rotated":
                             pec_labels.append("🔄 Rotated")
+                        elif p == "downscaled_to_1080p":
+                            pec_labels.append("📐 Downscaled 1080p")
                         elif p.startswith("native_resolution_"):
                             res = p.replace("native_resolution_", "")
                             pec_labels.append(f"📐 Native {res}")

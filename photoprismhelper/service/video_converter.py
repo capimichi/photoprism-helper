@@ -445,6 +445,8 @@ class VideoConverter:
         shorter_dim = min(orig_width, orig_height) if (orig_width > 0 and orig_height > 0) else orig_height
         if 0 < shorter_dim < 1080:
             peculiarities.append(f"native_resolution_{shorter_dim}p")
+        elif shorter_dim > 1080:
+            peculiarities.append("downscaled_to_1080p")
 
         try:
             returncode, err_text = self._execute_ffmpeg(
