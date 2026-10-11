@@ -20,6 +20,11 @@ CLI e tool di supporto per **PhotoPrism** che indicizza foto e video in un datab
    - Identificazione automatica dei video di grandi dimensioni (es. registrazioni 4K/60fps non compresse).
    - Stima del risparmio di spazio (~50-70%).
    - Generazione di script FFmpeg che preservano integralmente stream audio, timestamp originali e tutti i metadati/EXIF (`-map 0 -map_metadata 0`).
+5. **Correzione Metadati EXIF (`exif:fix`)**:
+   - Rilevamento automatico della data/ora dal timestamp del nome file (`YYYYMMDD_HHMMSS...`).
+   - Ispezione e popolamento atomico con `exiftool` dei tag mancanti o corrotti (`CreateDate`, `DateTimeOriginal`, `ModifyDate`).
+   - Scansione ricorsiva delle directory e modalità `--dry-run` sicura.
+
 
 ---
 
@@ -181,6 +186,67 @@ Lo script generato:
 - Esegue FFmpeg con `-map 0 -map_metadata 0 -tag:v hvc1 -c:a copy`
 - Preserva la data originale di scatto (`touch -r`)
 - Salva un backup di sicurezza dell'originale (`.bak`) prima della sostituzione.
+
+### 6. Correzione EXIF da Nome File (`exif:fix`)
+Ispeziona ricorsivamente una cartella di foto/video prima dell'import su PhotoPrism e popola i campi EXIF mancanti (`CreateDate`, `DateTimeOriginal`, `ModifyDate`) deducendo la data dal nome del file:
+```bash
+# Anteprima (dry-run): controlla i file senza modificarli
+photoprismhelper exif:fix /percorso/cartella --dry-run
+
+# Esecuzione con conferma interattiva
+photoprismhelper exif:fix /percorso/cartella
+
+# Esecuzione automatica (senza prompt di conferma)
+photoprismhelper exif:fix /percorso/cartella --yes
+
+# Esecuzione nel container Docker
+docker compose exec python photoprismhelper exif:fix /photoprism/originals --dry-run
+```
+
+### 7. Controllo e Separazione Falsi Stack Video (`video:stack-check`)
+Individua gli stack in cui PhotoPrism ha raggruppato più video con durata significativamente diversa (es. ripresi allo stesso secondo) e permette di separarli (unstack) via PhotoPrism REST API:
+```bash
+# Report tabellare degli stack con video di durata diversa (default: >= 2.0s)
+photoprismhelper video:stack-check
+
+# Limita a 20 elementi con soglia personalizzata
+photoprismhelper video:stack-check --limit 20 --min-diff-sec 5.0
+
+# Modalità interattiva con anteprima video side-by-side nel browser
+photoprismhelper video:stack-check -i
+
+# Separazione automatica (unstack) di tutti i video identificati
+photoprismhelper video:stack-check --unstack
+
+# Separazione automatica senza prompt di conferma
+photoprismhelper video:stack-check --unstack --yes
+
+# Output strutturato in formato JSON
+photoprismhelper video:stack-check --json
+```
+
+### 8. Gestione Duplicati Video (`video:duplicates`)
+Individua e risolve duplicati video cross-media (stesso contenuto con UID PhotoPrism diversi) o intra-stack (file multipli raggruppati nello stesso elemento PhotoPrism, come copie `.00001` o coppie Master ad alta risoluzione vs Proxy 720p).
+
+```bash
+# Scansione duplicati intra-stack in modalità interattiva (confronto Master vs Proxy, opzioni 1, 2, o, u, s, q)
+photoprismhelper video:duplicates --mode stack
+
+# Scansione duplicati intra-stack limitata ai primi 10 elementi
+photoprismhelper video:duplicates --mode stack --limit 10
+
+# Pulizia automatica batch mantenendo sempre il Master (qualità migliore) e rimuovendo i Proxy
+photoprismhelper video:duplicates --mode stack --auto-prefer master --yes
+
+# Pulizia mantenendo sempre i Proxy (risparmio spazio estremo)
+photoprismhelper video:duplicates --mode stack --auto-prefer proxy --yes
+
+# Sposta i file scartati in backup (.dup.bak) anziché eliminarli
+photoprismhelper video:duplicates --mode stack --auto-prefer master --keep-backup --yes
+
+# Scansione duplicati cross-media (elementi PhotoPrism distinti con video identico)
+photoprismhelper video:duplicates --mode cross --min-size-mb 10
+```
 
 ---
 

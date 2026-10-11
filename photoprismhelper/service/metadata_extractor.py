@@ -68,9 +68,25 @@ class MetadataExtractor:
                 "Rotation",
                 "-x",
                 "MatrixStructure",
+            ]
+
+            if target_path.lower().endswith((".mp4", ".mov", ".m4v")):
+                cmd.extend([
+                    "-QuickTime:CreateDate<DateTimeOriginal",
+                    "-QuickTime:CreateDate<CreateDate",
+                    "-QuickTime:ModifyDate<ModifyDate",
+                    "-QuickTime:TrackCreateDate<DateTimeOriginal",
+                    "-QuickTime:TrackCreateDate<CreateDate",
+                    "-QuickTime:MediaCreateDate<DateTimeOriginal",
+                    "-QuickTime:MediaCreateDate<CreateDate",
+                    "-Make<Make",
+                    "-Model<Model",
+                ])
+
+            cmd.extend([
                 "-overwrite_original",
                 target_path,
-            ]
+            ])
             subprocess.run(cmd, capture_output=True, text=True, check=True)
 
             # Preserve filesystem modification/creation time

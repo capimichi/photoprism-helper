@@ -273,4 +273,70 @@ class PhotoprismClient:
 
         return {"status": "busy", "error": "Already running"}
 
+    def unstack_file(self, photo_uid: str, file_uid: str) -> bool:
+        """Unstack a file from a photo in PhotoPrism, creating an independent photo entry for it.
+
+        :param photo_uid: UID of the parent photo/media item.
+        :param file_uid: UID of the file to separate from the stack.
+        :return: True if successfully unstacked, False otherwise.
+        """
+        if not self._session_token:
+            self.authenticate()
+
+        url = f"{self.base_url}/api/v1/photos/{photo_uid}/files/{file_uid}/unstack"
+        try:
+            resp = self._session.post(
+                url,
+                headers=self._get_headers(),
+                verify=self.verify_ssl,
+                timeout=self.timeout_seconds,
+            )
+            if resp.status_code in (200, 201):
+                logger.info("Successfully unstacked file %s from photo %s", file_uid, photo_uid)
+                return True
+
+            # If gateway error (e.g. Cloudflare 502/504), PhotoPrism might have completed heavy processing
+            if resp.status_code in (502, 503, 504):
+                time.sleep(1.5)
+                try:
+                    photo_data = self.get_photo(photo_uid)
+                    current_files = [f.get("UID") for f in photo_data.get("Files", [])]
+                    if file_uid not in current_files:
+                        logger.info(
+                            "Unstack file %s from photo %s succeeded despite proxy HTTP %s response",
+                            file_uid,
+                            photo_uid,
+                            resp.status_code,
+                        )
+                        return True
+                except Exception:
+                    pass
+
+            logger.warning(
+                "Failed to unstack file %s from photo %s: HTTP %s %s",
+                file_uid,
+                photo_uid,
+                resp.status_code,
+                resp.text,
+            )
+            return False
+        except requests.exceptions.RequestException as e:
+            # Check if despite timeout/network reset PhotoPrism completed the task
+            time.sleep(1.5)
+            try:
+                photo_data = self.get_photo(photo_uid)
+                current_files = [f.get("UID") for f in photo_data.get("Files", [])]
+                if file_uid not in current_files:
+                    logger.info(
+                        "Unstack file %s from photo %s succeeded despite network error: %s",
+                        file_uid,
+                        photo_uid,
+                        e,
+                    )
+                    return True
+            except Exception:
+                pass
+            logger.error("Exception unstacking file %s from photo %s: %s", file_uid, photo_uid, e)
+            return False
+
 

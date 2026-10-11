@@ -184,3 +184,11 @@ class MediaRepository(BaseRepository[MediaItem]):
         if limit:
             stmt = stmt.limit(limit)
         return list(session.scalars(stmt).all())
+
+    def delete_by_uid(self, session: Session, uid: str) -> bool:
+        """Delete a media item by its UID."""
+        item = self.get_by_uid(session, uid)
+        if item:
+            session.delete(item)
+            return True
+        return False

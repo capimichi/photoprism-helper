@@ -126,13 +126,14 @@ format_bytes() {
     if [[ $bytes -lt 1024 ]]; then
         echo "${bytes} B"
     elif [[ $bytes -lt 1048576 ]]; then
-        echo "$(awk "BEGIN {printf \"%.2f KB\", $bytes/1024}")"
+        awk -v b="$bytes" 'BEGIN {printf "%.2f KB", b/1024}'
     elif [[ $bytes -lt 1073741824 ]]; then
-        echo "$(awk "BEGIN {printf \"%.2f MB\", $bytes/1048576}")"
+        awk -v b="$bytes" 'BEGIN {printf "%.2f MB", b/1048576}'
     else
-        echo "$(awk "BEGIN {printf \"%.2f GB\", $bytes/1073741824}")"
+        awk -v b="$bytes" 'BEGIN {printf "%.2f GB", b/1073741824}'
     fi
 }
+
 
 # Portable file size in bytes
 get_file_size() {
@@ -211,22 +212,22 @@ for src_file in "${FILES[@]}"; do
     src_size=$(get_file_size "$src_file")
     src_size_fmt=$(format_bytes "$src_size")
 
-    echo -ne "[${INDEX}/${TOTAL_COUNT}] Moving: ${BOLD}${rel_path}${NC} (${src_size_fmt})... "
-
     if [[ "$DRY_RUN" = true ]]; then
-        echo -e "${YELLOW}[DRY-RUN - WOULD COPY & REMOVE]${NC}"
+        echo -e "[${INDEX}/${TOTAL_COUNT}] Moving: ${BOLD}${rel_path}${NC} (${src_size_fmt})... ${YELLOW}[DRY-RUN - WOULD COPY & REMOVE]${NC}"
         SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
         MOVED_BYTES=$((MOVED_BYTES + src_size))
         continue
     fi
 
+    echo -e "[${INDEX}/${TOTAL_COUNT}] Moving: ${BOLD}${rel_path}${NC} (${src_size_fmt})..."
+
     # 1. Create target directory
     mkdir -p "$dest_dir"
 
-    # 2. Copy preserving attributes (cp -p)
-    if ! cp -p "$src_file" "$dest_file"; then
+    # 2. Copy preserving timestamps with live progress (rsync -tP)
+    if ! rsync -tP "$src_file" "$dest_file"; then
         echo -e "${RED}[FAILED COPY]${NC}"
-        echo -e "  ${RED}✗ cp failed for: $src_file${NC}" >&2
+        echo -e "  ${RED}✗ rsync failed for: $src_file${NC}" >&2
         ERROR_COUNT=$((ERROR_COUNT + 1))
         continue
     fi

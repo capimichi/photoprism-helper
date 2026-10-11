@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -120,9 +121,9 @@ class VideoConverter:
                     name="hevc_vaapi",
                     is_hardware=True,
                     description=f"Linux VAAPI Hardware Acceleration ({vaapi_dev})",
-                    global_args=[],
-                    input_args=["-hwaccel", "vaapi", "-hwaccel_device", vaapi_dev, "-hwaccel_output_format", "vaapi"],
-                    scale_filter_template="scale_vaapi=w=-2:h={height}",
+                    global_args=["-vaapi_device", vaapi_dev],
+                    input_args=[],
+                    scale_filter_template="format=nv12,hwupload,scale_vaapi=w=-2:h={height}",
                     output_args=["-c:v", "hevc_vaapi", "-rc_mode", "VBR", "-b:v", "5000k", "-maxrate", "8000k"],
                 )
             )
@@ -348,6 +349,19 @@ class VideoConverter:
             bufsize=1,
         )
 
+        stderr_lines: list[str] = []
+
+        def _drain_stderr() -> None:
+            if proc.stderr:
+                try:
+                    for s_line in proc.stderr:
+                        stderr_lines.append(s_line)
+                except Exception:
+                    pass
+
+        drain_thread = threading.Thread(target=_drain_stderr, daemon=True)
+        drain_thread.start()
+
         if proc.stdout:
             for line in proc.stdout:
                 line = line.strip()
@@ -375,10 +389,11 @@ class VideoConverter:
                             pass
 
         proc.wait()
+        drain_thread.join(timeout=2.0)
         sys.stdout.write("\n")
         sys.stdout.flush()
 
-        err_text = proc.stderr.read() if proc.stderr else ""
+        err_text = "".join(stderr_lines)
         return proc.returncode, err_text
 
     def convert(

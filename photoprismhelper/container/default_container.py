@@ -10,9 +10,11 @@ from injector import Injector
 import photoprismhelper.entity.media_item  # noqa: F401
 from photoprismhelper.client.photoprism_client import PhotoprismClient
 from photoprismhelper.command.db_init_command import DbInitCommand
+from photoprismhelper.command.exif_fix_command import ExifFixCommand
 from photoprismhelper.command.media_stats_command import MediaStatsCommand
 from photoprismhelper.command.media_sync_command import MediaSyncCommand
 from photoprismhelper.command.optimize_command import VideoOptimizeCommand
+from photoprismhelper.command.stack_check_command import VideoStackCheckCommand
 from photoprismhelper.command.stack_duplicates_command import VideoDuplicatesCommand
 from photoprismhelper.command.tag_command import TagCommand
 from photoprismhelper.command.video_prune_command import VideoPruneCommand
@@ -22,8 +24,10 @@ from photoprismhelper.mapper.media_mapper import MediaMapper
 from photoprismhelper.repository.media_conversion_repository import MediaConversionRepository
 from photoprismhelper.repository.media_file_repository import MediaFileRepository
 from photoprismhelper.repository.media_repository import MediaRepository
+from photoprismhelper.service.exif_fix_service import ExifFixService
 from photoprismhelper.service.media_sync_service import MediaSyncService
 from photoprismhelper.service.preview_server import VideoPreviewServer
+from photoprismhelper.service.stack_analysis_service import StackAnalysisService
 from photoprismhelper.service.storage_analysis_service import StorageAnalysisService
 from photoprismhelper.service.tag_service import TagService
 from photoprismhelper.service.video_optimizer_service import VideoOptimizerService
@@ -148,6 +152,17 @@ class DefaultContainer:
         preview_server = VideoPreviewServer(port=8765)
         self.injector.binder.bind(VideoPreviewServer, to=preview_server)
 
+        exif_fix_service = ExifFixService()
+        self.injector.binder.bind(ExifFixService, to=exif_fix_service)
+
+        stack_analysis_service = StackAnalysisService(
+            media_repository=media_repository,
+            file_repository=media_file_repository,
+            photoprism_client=photoprism_client,
+            originals_path=self.photoprism_originals_path,
+        )
+        self.injector.binder.bind(StackAnalysisService, to=stack_analysis_service)
+
         # Commands
         self.injector.binder.bind(DbInitCommand, to=DbInitCommand(db_manager, app_config))
         self.injector.binder.bind(
@@ -156,6 +171,7 @@ class DefaultContainer:
         )
         self.injector.binder.bind(MediaStatsCommand, to=MediaStatsCommand(storage_analysis_service))
         self.injector.binder.bind(TagCommand, to=TagCommand(tag_service))
+        self.injector.binder.bind(ExifFixCommand, to=ExifFixCommand(exif_fix_service, app_config))
         self.injector.binder.bind(
             VideoOptimizeCommand,
             to=VideoOptimizeCommand(video_optimizer_service, storage_analysis_service, preview_server),
@@ -166,6 +182,15 @@ class DefaultContainer:
                 media_file_repository,
                 media_repository,
                 video_optimizer_service,
+                storage_analysis_service,
+                preview_server,
+                photoprism_client,
+            ),
+        )
+        self.injector.binder.bind(
+            VideoStackCheckCommand,
+            to=VideoStackCheckCommand(
+                stack_analysis_service,
                 storage_analysis_service,
                 preview_server,
                 photoprism_client,

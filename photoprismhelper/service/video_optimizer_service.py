@@ -17,6 +17,7 @@ from photoprismhelper.client.photoprism_client import PhotoprismClient
 from photoprismhelper.entity.media_conversion import MediaConversion
 from photoprismhelper.entity.media_file import MediaFile
 from photoprismhelper.entity.media_item import MediaItem
+from photoprismhelper.model.stack_duplicate import StackDuplicateCandidate
 from photoprismhelper.repository.media_conversion_repository import MediaConversionRepository
 from photoprismhelper.repository.media_file_repository import MediaFileRepository
 from photoprismhelper.repository.media_repository import MediaRepository
@@ -116,18 +117,22 @@ class VideoOptimizerService:
         item: MediaItem,
         tmp_dir: str,
         max_height: int = 1080,
+        input_file_path: str | None = None,
     ) -> OptimizationDraft:
         """Perform video encoding and validation into a local temporary staging directory.
 
         Does not modify the original file on the NAS in any way.
         """
-        input_path = self.resolve_disk_path(item.file_path)
-        if not os.path.isfile(input_path):
-            alt_rel = os.path.join(item.folder_path, item.file_name) if item.folder_path else item.file_name
-            alt_path = self.resolve_disk_path(alt_rel)
-            if os.path.isfile(alt_path):
-                input_path = alt_path
-                item.file_path = alt_rel
+        if input_file_path:
+            input_path = self.resolve_disk_path(input_file_path)
+        else:
+            input_path = self.resolve_disk_path(item.file_path)
+            if not os.path.isfile(input_path):
+                alt_rel = os.path.join(item.folder_path, item.file_name) if item.folder_path else item.file_name
+                alt_path = self.resolve_disk_path(alt_rel)
+                if os.path.isfile(alt_path):
+                    input_path = alt_path
+                    item.file_path = alt_rel
 
         if not os.path.isfile(input_path):
             raise FileNotFoundError(f"Input file not found on disk: {input_path}")
@@ -405,6 +410,296 @@ class VideoOptimizerService:
                         break
 
         return duplicates
+
+    def find_stack_duplicates(
+        self,
+        limit: int | None = None,
+        max_duration_diff: float = 1.5,
+    ) -> list[StackDuplicateCandidate]:
+        """Find video duplicates within the same PhotoPrism stack (master vs proxy or numeric copies)."""
+        import re
+
+        if not self._file_repository:
+            return []
+
+        session = self._file_repository.get_session()
+        try:
+            stacked_uids = self._file_repository.find_stacked_video_media_uids(session)
+            if not stacked_uids:
+                return []
+
+            candidates: list[StackDuplicateCandidate] = []
+            for uid in stacked_uids:
+                media_item = self._media_repository.get_by_uid(session, uid)
+                if not media_item:
+                    continue
+
+                files = self._file_repository.get_stack_files_for_media(
+                    session, uid, include_sidecars=False
+                )
+                video_files = [
+                    f
+                    for f in files
+                    if f.is_video and not f.is_missing and not f.is_sidecar
+                ]
+                if len(video_files) < 2:
+                    continue
+
+                # Sort by quality: resolution first, then file size descending
+                sorted_files = sorted(
+                    video_files,
+                    key=lambda f: ((f.width or 0) * (f.height or 0), f.file_size),
+                    reverse=True,
+                )
+                master = sorted_files[0]
+
+                # Compare master against each other file in stack
+                for proxy in sorted_files[1:]:
+                    if master.duration is not None and proxy.duration is not None:
+                        dur_diff = abs(master.duration - proxy.duration)
+                        if dur_diff > max_duration_diff:
+                            # Stacks with large duration diff (> 1.5s) are false stacks, handled by video:stack-check
+                            continue
+                    else:
+                        dur_diff = 0.0
+
+                    res_master = (master.width or 0) * (master.height or 0)
+                    res_proxy = (proxy.width or 0) * (proxy.height or 0)
+                    has_num_master = bool(re.search(r"\.\d{5}\.", master.file_name))
+                    has_num_proxy = bool(re.search(r"\.\d{5}\.", proxy.file_name))
+
+                    if has_num_master or has_num_proxy:
+                        duplicate_type = "numbered_copy"
+                        # If master had .00001 (e.g. optimized mp4), swap roles so user sees clean labels
+                        if has_num_master and not has_num_proxy:
+                            m_cand, p_cand = proxy, master
+                        else:
+                            m_cand, p_cand = master, proxy
+                    elif res_master != res_proxy and res_master > 0 and res_proxy > 0:
+                        duplicate_type = "master_proxy"
+                        m_cand, p_cand = master, proxy
+                    else:
+                        ratio = master.file_size / max(proxy.file_size, 1)
+                        if ratio >= 1.5:
+                            duplicate_type = "master_proxy"
+                        else:
+                            duplicate_type = "same_duration"
+                        m_cand, p_cand = master, proxy
+
+                    size_ratio = round(m_cand.file_size / max(p_cand.file_size, 1), 2)
+                    cand = StackDuplicateCandidate(
+                        media_uid=uid,
+                        media_id=media_item.id,
+                        photo_title=media_item.photo_title,
+                        taken_at=media_item.taken_at,
+                        file1=m_cand,
+                        file2=p_cand,
+                        master_file=m_cand,
+                        proxy_file=p_cand,
+                        duplicate_type=duplicate_type,
+                        duration_diff=round(dur_diff, 2),
+                        size_ratio=size_ratio,
+                        all_files=video_files,
+                    )
+                    candidates.append(cand)
+
+            # Sort by potential space freed (proxy_file size) descending
+            candidates.sort(key=lambda c: c.proxy_file.file_size, reverse=True)
+            if limit and limit > 0:
+                candidates = candidates[:limit]
+
+            return candidates
+        finally:
+            session.close()
+
+    def resolve_stack_duplicate(
+        self,
+        candidate: StackDuplicateCandidate,
+        keep: str = "master",
+        keep_backup: bool = False,
+        notify_photoprism: bool = True,
+    ) -> tuple[bool, str]:
+        """Resolve a stack duplicate by keeping the chosen file and deleting/backing up the discarded one."""
+        import re
+
+        keep_lower = str(keep).lower().strip()
+        if keep_lower in ("1", "master"):
+            kept_file = candidate.master_file
+            discarded_file = candidate.proxy_file
+            kept_label = "Master"
+            discarded_label = "Proxy"
+        elif keep_lower in ("2", "proxy"):
+            kept_file = candidate.proxy_file
+            discarded_file = candidate.master_file
+            kept_label = "Proxy"
+            discarded_label = "Master"
+        else:
+            return False, f"Scelta non valida: {keep}"
+
+        disk_discarded = self.resolve_disk_path(discarded_file.file_path)
+        disk_kept = self.resolve_disk_path(kept_file.file_path)
+
+        # 1. Handle discarded file on disk
+        if os.path.exists(disk_discarded):
+            if keep_backup:
+                backup_path = f"{disk_discarded}.dup.bak"
+                shutil.move(disk_discarded, backup_path)
+            else:
+                os.remove(disk_discarded)
+
+        # Remove sidecar .jpg if present
+        sidecar_discarded = f"{disk_discarded}.jpg"
+        if os.path.exists(sidecar_discarded):
+            try:
+                os.remove(sidecar_discarded)
+            except OSError:
+                pass
+
+        # 2. Check if kept file needs clean renaming (e.g. .00001.mp4 -> .mp4)
+        has_num = bool(re.search(r"\.\d{5}\.", kept_file.file_name))
+        new_kept_file_name = kept_file.file_name
+        new_kept_file_path = kept_file.file_path
+
+        if has_num and os.path.exists(disk_kept):
+            clean_name = re.sub(r"\.\d{5}\.", ".", kept_file.file_name)
+            clean_disk_path = os.path.join(os.path.dirname(disk_kept), clean_name)
+            if not os.path.exists(clean_disk_path):
+                try:
+                    shutil.move(disk_kept, clean_disk_path)
+                    disk_kept = clean_disk_path
+                    new_kept_file_name = clean_name
+                    rel_dir = os.path.dirname(kept_file.file_path)
+                    new_kept_file_path = os.path.join(rel_dir, clean_name) if rel_dir else clean_name
+
+                    if os.path.exists(f"{disk_kept}.jpg"):
+                        shutil.move(f"{disk_kept}.jpg", f"{clean_disk_path}.jpg")
+                except OSError as e:
+                    logger.warning("Could not cleanly rename kept file %s: %s", kept_file.file_name, e)
+
+        # 3. Update Database
+        if self._file_repository:
+            session = self._file_repository.get_session()
+            try:
+                self._file_repository.delete_by_file_uid(session, discarded_file.file_uid)
+
+                db_kept = self._file_repository.get_by_file_uid(session, kept_file.file_uid)
+                if db_kept:
+                    db_kept.is_primary = True
+                    db_kept.file_name = new_kept_file_name
+                    db_kept.file_path = new_kept_file_path
+
+                media_item = self._media_repository.get_by_uid(session, candidate.media_uid)
+                if media_item:
+                    media_item.file_name = new_kept_file_name
+                    media_item.file_path = new_kept_file_path
+                    media_item.file_size = kept_file.file_size
+                    media_item.width = kept_file.width
+                    media_item.height = kept_file.height
+                    media_item.duration = kept_file.duration
+                    media_item.codec = kept_file.codec
+                    media_item.fps = kept_file.fps
+                    _, ext = os.path.splitext(new_kept_file_name)
+                    media_item.extension = ext.lstrip(".").lower()
+
+                session.commit()
+            finally:
+                session.close()
+
+        # 4. Notify PhotoPrism to reindex folder with cleanup
+        if notify_photoprism and self._photoprism_client:
+            subfolder = self.get_relative_subfolder(disk_discarded)
+            try:
+                self._photoprism_client.trigger_index(path=subfolder, cleanup=True)
+            except Exception as e:
+                logger.warning("Could not notify PhotoPrism for cleanup: %s", e)
+
+        action_msg = "spostato in backup" if keep_backup else "eliminato"
+        return True, f"Mantenuto {kept_label} ({new_kept_file_name}), {action_msg} {discarded_label} ({discarded_file.file_name})."
+
+    def optimize_and_resolve_stack(
+        self,
+        candidate: StackDuplicateCandidate,
+        keep_backup: bool = True,
+        max_height: int = 1080,
+        notify_photoprism: bool = True,
+    ) -> tuple[bool, str]:
+        """Optimize the master video to 1080p HEVC MP4, then remove the proxy video."""
+        session = self._media_repository.get_session()
+        try:
+            item = self._media_repository.get_by_uid(session, candidate.media_uid)
+        finally:
+            session.close()
+
+        if not item:
+            return False, f"Elemento multimediale {candidate.media_uid} non trovato nel database."
+
+        with tempfile.TemporaryDirectory(prefix="pp_opt_") as tmp_dir:
+            draft = self.prepare_optimization(
+                item,
+                tmp_dir=tmp_dir,
+                max_height=max_height,
+                input_file_path=candidate.master_file.file_path,
+            )
+            if not draft.success:
+                return False, f"Ottimizzazione fallita: {draft.error_message}"
+
+            self.apply_optimization(draft, keep_backup=keep_backup, notify_photoprism=False)
+
+        # Remove proxy file
+        disk_proxy = self.resolve_disk_path(candidate.proxy_file.file_path)
+        if os.path.exists(disk_proxy):
+            if keep_backup:
+                shutil.move(disk_proxy, f"{disk_proxy}.dup.bak")
+            else:
+                os.remove(disk_proxy)
+
+        sidecar_proxy = f"{disk_proxy}.jpg"
+        if os.path.exists(sidecar_proxy):
+            try:
+                os.remove(sidecar_proxy)
+            except OSError:
+                pass
+
+        if self._file_repository:
+            session = self._file_repository.get_session()
+            try:
+                self._file_repository.delete_by_file_uid(session, candidate.proxy_file.file_uid)
+                session.commit()
+            finally:
+                session.close()
+
+        if notify_photoprism and self._photoprism_client:
+            subfolder = self.get_relative_subfolder(disk_proxy)
+            try:
+                self._photoprism_client.trigger_index(path=subfolder, cleanup=True)
+            except Exception as e:
+                logger.warning("Could not notify PhotoPrism: %s", e)
+
+        return True, f"Master ottimizzato con successo ed eliminato il file proxy ({candidate.proxy_file.file_name})."
+
+    def unstack_duplicate(
+        self,
+        candidate: StackDuplicateCandidate,
+        notify_photoprism: bool = True,
+    ) -> tuple[bool, str]:
+        """Unstack duplicate files in PhotoPrism into independent photo items."""
+        if not self._photoprism_client:
+            return False, "PhotoPrism client non configurato."
+
+        file_to_unstack = candidate.proxy_file if not candidate.proxy_file.is_primary else candidate.master_file
+        ok = self._photoprism_client.unstack_file(candidate.media_uid, file_to_unstack.file_uid)
+        if not ok:
+            return False, f"Impossibile separare il file {file_to_unstack.file_name} tramite API PhotoPrism."
+
+        if notify_photoprism:
+            disk_p = self.resolve_disk_path(file_to_unstack.file_path)
+            subfolder = self.get_relative_subfolder(disk_p)
+            try:
+                self._photoprism_client.trigger_index(path=subfolder, cleanup=False)
+            except Exception as e:
+                logger.warning("Could not notify PhotoPrism: %s", e)
+
+        return True, f"Separato con successo {file_to_unstack.file_name} in un nuovo elemento indipendente."
 
     @staticmethod
     def get_mdat_info(file_path: str) -> tuple[int, str] | None:

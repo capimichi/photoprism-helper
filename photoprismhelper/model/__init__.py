@@ -3,5 +3,6 @@ from photoprismhelper.model.media_stat import (
     OptimizationCandidate,
     StorageSummary,
 )
+from photoprismhelper.model.stack_duplicate import StackDuplicateCandidate
 
-__all__ = ["BreakdownStat", "OptimizationCandidate", "StorageSummary"]
+__all__ = ["BreakdownStat", "OptimizationCandidate", "StorageSummary", "StackDuplicateCandidate"]
